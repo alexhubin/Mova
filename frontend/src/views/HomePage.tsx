@@ -39,8 +39,8 @@ function Dashboard({ name, username }: { name: string; username: string }) {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [roomName, setRoomName] = useState('')
-  const friends = useQuery({ queryKey: ['friends'], queryFn: () => api<FriendsPayload>('/api/friends'), refetchInterval: 5_000 })
-  const calls = useQuery({ queryKey: ['calls'], queryFn: () => api<DirectCall[]>('/api/calls'), refetchInterval: 2_000 })
+  const friends = useQuery({ queryKey: ['friends'], queryFn: () => api<FriendsPayload>('/api/friends'), refetchInterval: 15_000 })
+  const calls = useQuery({ queryKey: ['calls'], queryFn: () => api<DirectCall[]>('/api/calls') })
   const searchQuery = useQuery({
     queryKey: ['user-search', search],
     queryFn: () => api<FriendUser[]>(`/api/users/search?q=${encodeURIComponent(search.trim())}`),

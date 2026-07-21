@@ -145,6 +145,7 @@ func (s *Server) createDirectCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Не удалось начать звонок")
 		return
 	}
+	s.callEvents.notify(caller.ID, callee.ID)
 	writeJSON(w, http.StatusCreated, callResponse{ID: call.ID, Status: call.Status, InviteCode: room.InviteCode, Peer: friendUserResponse{ID: callee.ID, Username: callee.Username, DisplayName: callee.DisplayName}, Incoming: false, CreatedAt: call.CreatedAt})
 }
 
@@ -159,11 +160,12 @@ func (s *Server) acceptDirectCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Не удалось принять звонок")
 		return
 	}
+	s.callEvents.notify(call.CallerID, call.CalleeID)
 	writeCallByID(w, r, s, call.ID)
 }
 
 func (s *Server) declineDirectCall(w http.ResponseWriter, r *http.Request) {
-	_, err := s.queries.DeclineDirectCall(r.Context(), dbgen.DeclineDirectCallParams{ID: chi.URLParam(r, "callID"), CalleeID: currentUser(r).ID, EndedAt: sql.NullTime{Time: s.now(), Valid: true}})
+	call, err := s.queries.DeclineDirectCall(r.Context(), dbgen.DeclineDirectCallParams{ID: chi.URLParam(r, "callID"), CalleeID: currentUser(r).ID, EndedAt: sql.NullTime{Time: s.now(), Valid: true}})
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusConflict, "Звонок уже завершён")
 		return
@@ -173,11 +175,12 @@ func (s *Server) declineDirectCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Не удалось отклонить звонок")
 		return
 	}
+	s.callEvents.notify(call.CallerID, call.CalleeID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) endDirectCall(w http.ResponseWriter, r *http.Request) {
-	_, err := s.queries.EndDirectCall(r.Context(), dbgen.EndDirectCallParams{ID: chi.URLParam(r, "callID"), CallerID: currentUser(r).ID, EndedAt: sql.NullTime{Time: s.now(), Valid: true}})
+	call, err := s.queries.EndDirectCall(r.Context(), dbgen.EndDirectCallParams{ID: chi.URLParam(r, "callID"), CallerID: currentUser(r).ID, EndedAt: sql.NullTime{Time: s.now(), Valid: true}})
 	if errors.Is(err, sql.ErrNoRows) {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -187,6 +190,7 @@ func (s *Server) endDirectCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Не удалось завершить звонок")
 		return
 	}
+	s.callEvents.notify(call.CallerID, call.CalleeID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

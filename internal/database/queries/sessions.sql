@@ -9,7 +9,10 @@ WHERE s.token_hash = $1 AND s.expires_at > $2
 LIMIT 1;
 
 -- name: TouchSession :exec
-UPDATE sessions SET last_seen_at = $2 WHERE token_hash = $1;
+UPDATE sessions
+SET last_seen_at = $2
+WHERE token_hash = $1
+  AND last_seen_at < $2 - INTERVAL '10 seconds';
 
 -- name: IsUserOnline :one
 SELECT EXISTS (

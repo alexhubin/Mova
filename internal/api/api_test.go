@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -27,6 +28,20 @@ func TestAuthRoomAndLiveKitTokenFlow(t *testing.T) {
 	}
 	response.Body.Close()
 
+	request, err := http.NewRequest(http.MethodGet, server.URL+"/api/calls/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(response.Body).ReadString('\n')
+	response.Body.Close()
+	if err != nil || line != "event: calls\n" {
+		t.Fatalf("initial call event = %q, error = %v", line, err)
+	}
+
 	response = doJSON(t, client, http.MethodGet, server.URL+"/api/auth/me", nil)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("me status = %d, body = %s", response.StatusCode, responseBody(t, response))
@@ -36,6 +51,12 @@ func TestAuthRoomAndLiveKitTokenFlow(t *testing.T) {
 	if me.Email != "anna@example.com" || me.DisplayName != "Анна" || me.Username != "anna" {
 		t.Fatalf("unexpected me response: %+v", me)
 	}
+
+	response = doJSON(t, client, http.MethodPost, server.URL+"/api/presence", nil)
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("presence status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	response.Body.Close()
 
 	response = doJSON(t, client, http.MethodPost, server.URL+"/api/rooms", map[string]string{"name": "Команда Mova"})
 	if response.StatusCode != http.StatusCreated {

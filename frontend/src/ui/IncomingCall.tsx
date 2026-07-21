@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { Phone, PhoneOff } from 'lucide-react'
@@ -13,8 +14,27 @@ export function IncomingCall() {
     queryKey: ['calls'],
     queryFn: () => api<DirectCall[]>('/api/calls'),
     enabled: Boolean(user),
-    refetchInterval: user ? 2_000 : false,
+    refetchInterval: user ? 30_000 : false,
   })
+
+  useEffect(() => {
+    if (!user) return
+    const events = new EventSource('/api/calls/events')
+    const refreshCalls = () => void queryClient.invalidateQueries({ queryKey: ['calls'] })
+    events.addEventListener('calls', refreshCalls)
+    return () => {
+      events.removeEventListener('calls', refreshCalls)
+      events.close()
+    }
+  }, [queryClient, user])
+
+  useEffect(() => {
+    if (!user) return
+    const heartbeat = () => void api<void>('/api/presence', { method: 'POST' }).catch(() => undefined)
+    heartbeat()
+    const interval = window.setInterval(heartbeat, 10_000)
+    return () => window.clearInterval(interval)
+  }, [user])
   const incoming = calls.data?.find((call) => call.incoming && call.status === 'ringing')
   const accept = useMutation({
     mutationFn: () => api<DirectCall>(`/api/calls/${incoming!.id}/accept`, { method: 'POST' }),

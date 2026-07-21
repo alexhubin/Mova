@@ -28,20 +28,21 @@ import (
 const (
 	sessionCookie = "mova_session"
 	sessionTTL    = 30 * 24 * time.Hour
-	presenceTTL   = 15 * time.Second
+	presenceTTL   = 30 * time.Second
 	maxBodyBytes  = 64 << 10
 )
 
 var usernamePattern = regexp.MustCompile(`^[a-z0-9_]{3,32}$`)
 
 type Server struct {
-	db        *sql.DB
-	queries   *dbgen.Queries
-	cfg       config.Config
-	issuer    media.TokenIssuer
-	now       func() time.Time
-	newID     func() string
-	newInvite func() (string, error)
+	db         *sql.DB
+	queries    *dbgen.Queries
+	cfg        config.Config
+	issuer     media.TokenIssuer
+	now        func() time.Time
+	newID      func() string
+	newInvite  func() (string, error)
+	callEvents *callEventBroker
 }
 
 type contextKey string
@@ -50,12 +51,13 @@ const userContextKey contextKey = "user"
 
 func New(db *sql.DB, cfg config.Config) *Server {
 	return &Server{
-		db:      db,
-		queries: dbgen.New(db),
-		cfg:     cfg,
-		issuer:  media.TokenIssuer{APIKey: cfg.LiveKitAPIKey, APISecret: cfg.LiveKitAPISecret, TTL: cfg.LiveKitTokenTTL},
-		now:     time.Now,
-		newID:   uuid.NewString,
+		db:         db,
+		queries:    dbgen.New(db),
+		cfg:        cfg,
+		callEvents: newCallEventBroker(),
+		issuer:     media.TokenIssuer{APIKey: cfg.LiveKitAPIKey, APISecret: cfg.LiveKitAPISecret, TTL: cfg.LiveKitTokenTTL},
+		now:        time.Now,
+		newID:      uuid.NewString,
 		newInvite: func() (string, error) {
 			value := make([]byte, 8)
 			if _, err := rand.Read(value); err != nil {
@@ -71,7 +73,7 @@ func (s *Server) Handler() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(15 * time.Second))
+	r.Use(requestTimeout)
 	r.Use(s.securityHeaders)
 	r.Use(s.verifyOrigin)
 
@@ -95,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 		r.Delete("/api/friend-requests/{requestID}", s.declineFriendRequest)
 		r.Delete("/api/friends/{userID}", s.deleteFriend)
 		r.Get("/api/calls", s.listCalls)
+		r.Get("/api/calls/events", s.streamCallEvents)
 		r.Post("/api/calls", s.createDirectCall)
 		r.Post("/api/calls/{callID}/accept", s.acceptDirectCall)
 		r.Post("/api/calls/{callID}/decline", s.declineDirectCall)
@@ -102,9 +105,25 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/rooms", s.createRoom)
 		r.Get("/api/rooms/{inviteCode}", s.getRoom)
 		r.Post("/api/rooms/{inviteCode}/token", s.roomToken)
+		r.Post("/api/presence", s.presence)
 	})
 
 	return r
+}
+
+func requestTimeout(next http.Handler) http.Handler {
+	standard := middleware.Timeout(15 * time.Second)(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/calls/events" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		standard.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) presence(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
