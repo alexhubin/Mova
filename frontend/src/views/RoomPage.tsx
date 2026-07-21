@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Check,
   Copy,
@@ -9,7 +9,10 @@ import {
   MicOff,
   MonitorUp,
   Radio,
+  Settings,
+  SlidersHorizontal,
   Users,
+  X,
 } from 'lucide-react'
 import {
   ConnectionState,
@@ -21,12 +24,13 @@ import {
   type TrackPublication,
 } from 'livekit-client'
 import { api, currentUser, type AccountSettings, type DirectCall, type RoomInfo, type RoomToken } from '../api'
-import { loadDeviceSettings } from '../deviceSettings'
+import { loadDeviceSettings, requestAndListAudioDevices, saveDeviceSettings, type LocalDeviceSettings } from '../deviceSettings'
 import { initials, inviteURL } from '../utils'
 
 export function RoomPage() {
   const { inviteCode } = useParams({ from: '/r/$inviteCode' })
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const audioHost = useRef<HTMLDivElement>(null)
   const activeCall = useRef<Room | null>(null)
   const directCallID = useRef<string | null>(null)
@@ -35,6 +39,7 @@ export function RoomPage() {
   const [copied, setCopied] = useState(false)
   const [controlError, setControlError] = useState('')
   const [controlBusy, setControlBusy] = useState(false)
+  const [callSettingsOpen, setCallSettingsOpen] = useState(false)
 
   const { data: user, isLoading: userLoading } = useQuery({ queryKey: ['me'], queryFn: currentUser })
   const roomQuery = useQuery({
@@ -53,6 +58,12 @@ export function RoomPage() {
     enabled: Boolean(user),
     refetchInterval: 2_000,
   })
+
+  useEffect(() => {
+    const openSettings = () => setCallSettingsOpen(true)
+    window.addEventListener('mova:open-call-settings', openSettings)
+    return () => window.removeEventListener('mova:open-call-settings', openSettings)
+  }, [])
 
   useEffect(() => {
     if (roomQuery.data?.kind !== 'direct') {
@@ -315,14 +326,83 @@ export function RoomPage() {
           <button className={`call-control wide ${screenEnabled ? 'active' : ''}`} onClick={toggleScreen} disabled={controlBusy} aria-label={screenEnabled ? 'Остановить показ экрана' : 'Показать экран'}>
             <MonitorUp size={21} /><span>{screenEnabled ? 'Остановить' : 'Экран'}</span>
           </button>
+          <button className="call-control" onClick={() => setCallSettingsOpen(true)} aria-label="Настройки звонка" title="Настройки звонка">
+            <Settings size={21} />
+          </button>
           <button className="call-control danger" onClick={leave} aria-label="Выйти из комнаты" title="Выйти">
             <LogOut size={21} />
           </button>
         </div>
       )}
       {connected && controlError && <div className="room-error" role="alert">{controlError}</div>}
+      {callSettingsOpen && <CallSettingsModal room={call} settings={settingsQuery.data} onClose={() => setCallSettingsOpen(false)} onSettingsSaved={(next) => queryClient.setQueryData(['account-settings'], next)} />}
     </main>
   )
+}
+
+function CallSettingsModal({ room, settings, onClose, onSettingsSaved }: { room: Room | null; settings?: AccountSettings; onClose: () => void; onSettingsSaved: (settings: AccountSettings) => void }) {
+  const [deviceValues, setDeviceValues] = useState<LocalDeviceSettings>(loadDeviceSettings)
+  const [devices, setDevices] = useState<{ inputs: MediaDeviceInfo[]; outputs: MediaDeviceInfo[] }>({ inputs: [], outputs: [] })
+  const [error, setError] = useState('')
+  const quality = useMutation({
+    mutationFn: (videoQuality: AccountSettings['video_quality']) => api<AccountSettings>('/api/account/settings', { method: 'PUT', body: JSON.stringify({ video_quality: videoQuality }) }),
+    onSuccess: onSettingsSaved,
+  })
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', closeOnEscape)
+    void listDevices().then(setDevices)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+
+  async function allowDevices() {
+    setError('')
+    try {
+      setDevices(await requestAndListAudioDevices())
+    } catch {
+      setError('Браузер не дал доступ к аудиоустройствам.')
+    }
+  }
+
+  async function selectDevice(key: keyof LocalDeviceSettings, kind: 'audioinput' | 'audiooutput', value: string) {
+    const next = { ...deviceValues, [key]: value }
+    setDeviceValues(next)
+    saveDeviceSettings(next)
+    if (!room) return
+    setError('')
+    try {
+      await room.switchActiveDevice(kind, value || 'default', false)
+    } catch {
+      setError(kind === 'audioinput' ? 'Не удалось переключить микрофон.' : 'Этот браузер не поддерживает переключение устройства вывода.')
+    }
+  }
+
+  return (
+    <div className="call-settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <section className="call-settings-modal" role="dialog" aria-modal="true" aria-labelledby="call-settings-title">
+        <div className="section-heading"><div><span className="section-kicker">Без выхода из комнаты</span><h2 id="call-settings-title" className="font-display text-3xl font-semibold">Настройки звонка</h2></div><button className="mini-action" onClick={onClose} aria-label="Закрыть"><X size={18} /></button></div>
+        <button type="button" className="button-secondary compact mt-6" onClick={allowDevices}><SlidersHorizontal size={17} /> Обновить устройства</button>
+        <div className="mt-5 space-y-4">
+          <CallDeviceSelect label="Микрофон" value={deviceValues.audioInputId} devices={devices.inputs} onChange={(value) => selectDevice('audioInputId', 'audioinput', value)} />
+          <CallDeviceSelect label="Наушники или динамики" value={deviceValues.audioOutputId} devices={devices.outputs} onChange={(value) => selectDevice('audioOutputId', 'audiooutput', value)} disabled={!('setSinkId' in HTMLMediaElement.prototype)} />
+          <label className="field-label">Качество демонстрации экрана<select className="text-input" value={settings?.video_quality ?? 'high'} onChange={(event) => quality.mutate(event.target.value as AccountSettings['video_quality'])} disabled={quality.isPending}><option value="low">720p · 15 кадров/с</option><option value="medium">1080p · 15 кадров/с</option><option value="high">1080p · 30 кадров/с</option></select></label>
+          <p className="settings-hint">Микрофон и звук переключаются сразу. Качество применяется при следующем запуске демонстрации экрана.</p>
+          {(error || quality.error) && <p className="error-note">{error || quality.error?.message}</p>}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function CallDeviceSelect({ label, value, devices, onChange, disabled }: { label: string; value: string; devices: MediaDeviceInfo[]; onChange: (value: string) => void; disabled?: boolean }) {
+  return <label className="field-label">{label}<select className="text-input" value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled}><option value="">Системное устройство</option>{devices.map((device, index) => <option key={device.deviceId || index} value={device.deviceId}>{device.label || `${label} ${index + 1}`}</option>)}</select></label>
+}
+
+async function listDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) return { inputs: [], outputs: [] }
+  const devices = await navigator.mediaDevices.enumerateDevices()
+  return { inputs: devices.filter((device) => device.kind === 'audioinput'), outputs: devices.filter((device) => device.kind === 'audiooutput') }
 }
 
 function stopLocalMedia(room: Room) {

@@ -1,10 +1,11 @@
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { LogOut, Settings } from 'lucide-react'
 import { api, currentUser } from '../api'
 
 export function AppHeader() {
   const navigate = useNavigate()
+  const inRoom = useRouterState({ select: (state) => state.location.pathname.startsWith('/r/') })
   const queryClient = useQueryClient()
   const { data: user } = useQuery({ queryKey: ['me'], queryFn: currentUser })
   const logout = useMutation({
@@ -24,7 +25,11 @@ export function AppHeader() {
       {user ? (
         <div className="flex items-center gap-2 sm:gap-4">
           <span className="hidden text-right sm:block"><strong className="block text-sm">{user.display_name}</strong><small className="text-ink-muted">@{user.username}</small></span>
-          <Link to="/settings" className="icon-button" aria-label="Настройки" title="Настройки"><Settings size={18} /></Link>
+          {inRoom ? (
+            <button className="icon-button" onClick={() => window.dispatchEvent(new Event('mova:open-call-settings'))} aria-label="Настройки звонка" title="Настройки звонка"><Settings size={18} /></button>
+          ) : (
+            <Link to="/settings" className="icon-button" aria-label="Настройки" title="Настройки"><Settings size={18} /></Link>
+          )}
           <button className="icon-button" onClick={() => logout.mutate()} aria-label="Выйти" title="Выйти">
             <LogOut size={18} />
           </button>
