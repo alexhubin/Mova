@@ -4,25 +4,69 @@
 
 package dbgen
 
+import (
+	"database/sql"
+	"time"
+)
+
+type DirectCall struct {
+	ID         string       `json:"id"`
+	RoomID     string       `json:"room_id"`
+	CallerID   string       `json:"caller_id"`
+	CalleeID   string       `json:"callee_id"`
+	Status     string       `json:"status"`
+	CreatedAt  time.Time    `json:"created_at"`
+	AnsweredAt sql.NullTime `json:"answered_at"`
+	EndedAt    sql.NullTime `json:"ended_at"`
+}
+
+type FriendRequest struct {
+	ID         string    `json:"id"`
+	SenderID   string    `json:"sender_id"`
+	ReceiverID string    `json:"receiver_id"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type Friendship struct {
+	UserID    string    `json:"user_id"`
+	FriendID  string    `json:"friend_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Room struct {
-	ID         string `json:"id"`
-	InviteCode string `json:"invite_code"`
-	Name       string `json:"name"`
-	OwnerID    string `json:"owner_id"`
-	CreatedAt  int64  `json:"created_at"`
+	ID         string    `json:"id"`
+	InviteCode string    `json:"invite_code"`
+	Name       string    `json:"name"`
+	OwnerID    string    `json:"owner_id"`
+	Kind       string    `json:"kind"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type RoomMember struct {
+	RoomID    string    `json:"room_id"`
+	UserID    string    `json:"user_id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Session struct {
-	TokenHash string `json:"token_hash"`
-	UserID    string `json:"user_id"`
-	ExpiresAt int64  `json:"expires_at"`
-	CreatedAt int64  `json:"created_at"`
+	TokenHash string    `json:"token_hash"`
+	UserID    string    `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type User struct {
-	ID           string `json:"id"`
-	Email        string `json:"email"`
-	DisplayName  string `json:"display_name"`
-	PasswordHash string `json:"password_hash"`
-	CreatedAt    int64  `json:"created_at"`
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	Email        string    `json:"email"`
+	DisplayName  string    `json:"display_name"`
+	PasswordHash string    `json:"password_hash"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type UserSetting struct {
+	UserID       string    `json:"user_id"`
+	VideoQuality string    `json:"video_quality"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }

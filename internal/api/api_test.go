@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
-	"path/filepath"
+	"os"
 	"testing"
 	"time"
 
@@ -20,7 +20,7 @@ func TestAuthRoomAndLiveKitTokenFlow(t *testing.T) {
 	server, client := newTestServer(t)
 
 	response := doJSON(t, client, http.MethodPost, server.URL+"/api/auth/register", map[string]string{
-		"email": "anna@example.com", "password": "very-secure-password", "display_name": "Анна",
+		"email": "anna@example.com", "password": "very-secure-password", "display_name": "Анна", "username": "anna",
 	})
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("register status = %d, body = %s", response.StatusCode, responseBody(t, response))
@@ -33,7 +33,7 @@ func TestAuthRoomAndLiveKitTokenFlow(t *testing.T) {
 	}
 	var me userResponse
 	decodeResponse(t, response, &me)
-	if me.Email != "anna@example.com" || me.DisplayName != "Анна" {
+	if me.Email != "anna@example.com" || me.DisplayName != "Анна" || me.Username != "anna" {
 		t.Fatalf("unexpected me response: %+v", me)
 	}
 
@@ -112,12 +112,18 @@ func TestProtectedEndpointsAndOrigin(t *testing.T) {
 
 func newTestServer(t *testing.T) (*httptest.Server, *http.Client) {
 	t.Helper()
-	dsn := "file:" + filepath.Join(t.TempDir(), "test.db") + "?_pragma=busy_timeout%285000%29&_pragma=foreign_keys%281%29"
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is required for PostgreSQL API integration tests")
+	}
 	db, err := database.Open(context.Background(), dsn)
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	if _, err := db.ExecContext(context.Background(), "TRUNCATE direct_calls, friendships, friend_requests, room_members, rooms, sessions, user_settings, users CASCADE"); err != nil {
+		t.Fatalf("reset test database: %v", err)
+	}
 
 	cfg := config.Config{
 		AppOrigin: "http://localhost", CookieSecure: false,
@@ -126,11 +132,16 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client) {
 	}
 	server := httptest.NewServer(New(db, cfg).Handler())
 	t.Cleanup(server.Close)
+	return server, newHTTPClient(t)
+}
+
+func newHTTPClient(t *testing.T) *http.Client {
+	t.Helper()
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return server, &http.Client{Jar: jar, Timeout: 5 * time.Second}
+	return &http.Client{Jar: jar, Timeout: 5 * time.Second}
 }
 
 func doJSON(t *testing.T, client *http.Client, method, url string, body any) *http.Response {

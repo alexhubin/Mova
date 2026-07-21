@@ -21,7 +21,7 @@ type Config struct {
 func Load() (Config, error) {
 	cfg := Config{
 		HTTPAddr:         env("HTTP_ADDR", ":8080"),
-		DatabaseURL:      env("DATABASE_URL", "file:data/mova.db?_pragma=busy_timeout%285000%29&_pragma=journal_mode%28WAL%29&_pragma=foreign_keys%281%29"),
+		DatabaseURL:      env("DATABASE_URL", "postgres://mova:mova-development-password@localhost:5432/mova?sslmode=disable"),
 		AppOrigin:        env("APP_ORIGIN", "http://localhost"),
 		LiveKitURL:       env("LIVEKIT_URL", "ws://localhost:7880"),
 		LiveKitAPIKey:    env("LIVEKIT_API_KEY", "devkey"),

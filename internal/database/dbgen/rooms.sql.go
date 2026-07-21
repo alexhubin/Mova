@@ -7,20 +7,39 @@ package dbgen
 
 import (
 	"context"
+	"time"
 )
 
+const addRoomMember = `-- name: AddRoomMember :exec
+INSERT INTO room_members (room_id, user_id, created_at)
+VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING
+`
+
+type AddRoomMemberParams struct {
+	RoomID    string    `json:"room_id"`
+	UserID    string    `json:"user_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (q *Queries) AddRoomMember(ctx context.Context, arg AddRoomMemberParams) error {
+	_, err := q.db.ExecContext(ctx, addRoomMember, arg.RoomID, arg.UserID, arg.CreatedAt)
+	return err
+}
+
 const createRoom = `-- name: CreateRoom :one
-INSERT INTO rooms (id, invite_code, name, owner_id, created_at)
-VALUES (?, ?, ?, ?, ?)
-RETURNING id, invite_code, name, owner_id, created_at
+INSERT INTO rooms (id, invite_code, name, owner_id, kind, created_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, invite_code, name, owner_id, kind, created_at
 `
 
 type CreateRoomParams struct {
-	ID         string `json:"id"`
-	InviteCode string `json:"invite_code"`
-	Name       string `json:"name"`
-	OwnerID    string `json:"owner_id"`
-	CreatedAt  int64  `json:"created_at"`
+	ID         string    `json:"id"`
+	InviteCode string    `json:"invite_code"`
+	Name       string    `json:"name"`
+	OwnerID    string    `json:"owner_id"`
+	Kind       string    `json:"kind"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error) {
@@ -29,6 +48,7 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 		arg.InviteCode,
 		arg.Name,
 		arg.OwnerID,
+		arg.Kind,
 		arg.CreatedAt,
 	)
 	var i Room
@@ -37,13 +57,14 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 		&i.InviteCode,
 		&i.Name,
 		&i.OwnerID,
+		&i.Kind,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getRoomByInviteCode = `-- name: GetRoomByInviteCode :one
-SELECT id, invite_code, name, owner_id, created_at FROM rooms WHERE invite_code = ? LIMIT 1
+SELECT id, invite_code, name, owner_id, kind, created_at FROM rooms WHERE invite_code = $1 LIMIT 1
 `
 
 func (q *Queries) GetRoomByInviteCode(ctx context.Context, inviteCode string) (Room, error) {
@@ -54,7 +75,26 @@ func (q *Queries) GetRoomByInviteCode(ctx context.Context, inviteCode string) (R
 		&i.InviteCode,
 		&i.Name,
 		&i.OwnerID,
+		&i.Kind,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const isRoomMember = `-- name: IsRoomMember :one
+SELECT EXISTS (
+    SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2
+) AS is_member
+`
+
+type IsRoomMemberParams struct {
+	RoomID string `json:"room_id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) IsRoomMember(ctx context.Context, arg IsRoomMemberParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, isRoomMember, arg.RoomID, arg.UserID)
+	var is_member bool
+	err := row.Scan(&is_member)
+	return is_member, err
 }

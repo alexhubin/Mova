@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/mail"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,15 +22,19 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
 	sessionCookie = "mova_session"
-	sessionTTL    = 7 * 24 * time.Hour
+	sessionTTL    = 30 * 24 * time.Hour
 	maxBodyBytes  = 64 << 10
 )
 
+var usernamePattern = regexp.MustCompile(`^[a-z0-9_]{3,32}$`)
+
 type Server struct {
+	db        *sql.DB
 	queries   *dbgen.Queries
 	cfg       config.Config
 	issuer    media.TokenIssuer
@@ -44,6 +49,7 @@ const userContextKey contextKey = "user"
 
 func New(db *sql.DB, cfg config.Config) *Server {
 	return &Server{
+		db:      db,
 		queries: dbgen.New(db),
 		cfg:     cfg,
 		issuer:  media.TokenIssuer{APIKey: cfg.LiveKitAPIKey, APISecret: cfg.LiveKitAPISecret, TTL: cfg.LiveKitTokenTTL},
@@ -77,6 +83,21 @@ func (s *Server) Handler() http.Handler {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireUser)
+		r.Patch("/api/account/profile", s.updateProfile)
+		r.Put("/api/account/password", s.updatePassword)
+		r.Get("/api/account/settings", s.getSettings)
+		r.Put("/api/account/settings", s.updateSettings)
+		r.Get("/api/users/search", s.searchUsers)
+		r.Get("/api/friends", s.listFriends)
+		r.Post("/api/friend-requests", s.createFriendRequest)
+		r.Post("/api/friend-requests/{requestID}/accept", s.acceptFriendRequest)
+		r.Delete("/api/friend-requests/{requestID}", s.declineFriendRequest)
+		r.Delete("/api/friends/{userID}", s.deleteFriend)
+		r.Get("/api/calls", s.listCalls)
+		r.Post("/api/calls", s.createDirectCall)
+		r.Post("/api/calls/{callID}/accept", s.acceptDirectCall)
+		r.Post("/api/calls/{callID}/decline", s.declineDirectCall)
+		r.Post("/api/calls/{callID}/end", s.endDirectCall)
 		r.Post("/api/rooms", s.createRoom)
 		r.Get("/api/rooms/{inviteCode}", s.getRoom)
 		r.Post("/api/rooms/{inviteCode}/token", s.roomToken)
@@ -115,7 +136,7 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 		}
 		user, err := s.queries.GetSessionUser(r.Context(), dbgen.GetSessionUserParams{
 			TokenHash: auth.HashSessionToken(cookie.Value),
-			ExpiresAt: s.now().Unix(),
+			ExpiresAt: s.now(),
 		})
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusUnauthorized, "Сессия истекла")
@@ -134,10 +155,12 @@ type authRequest struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`
 	DisplayName string `json:"display_name"`
+	Username    string `json:"username"`
 }
 
 type userResponse struct {
 	ID          string `json:"id"`
+	Username    string `json:"username"`
 	Email       string `json:"email"`
 	DisplayName string `json:"display_name"`
 }
@@ -149,6 +172,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	}
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	input.Username = normalizeUsername(input.Username)
 	address, err := mail.ParseAddress(input.Email)
 	if err != nil || address.Address != input.Email || len(input.Email) > 254 {
 		writeError(w, http.StatusUnprocessableEntity, "Введите корректный email")
@@ -158,20 +182,42 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "Имя должно содержать от 2 до 40 символов")
 		return
 	}
+	if !usernamePattern.MatchString(input.Username) {
+		writeError(w, http.StatusUnprocessableEntity, "Username: 3–32 символа, только латинские буквы, цифры и _")
+		return
+	}
 	hash, err := auth.HashPassword(input.Password)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "Пароль должен содержать от 8 до 128 символов")
 		return
 	}
-	user, err := s.queries.CreateUser(r.Context(), dbgen.CreateUserParams{
-		ID: s.newID(), Email: input.Email, DisplayName: input.DisplayName, PasswordHash: hash, CreatedAt: s.now().Unix(),
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Не удалось создать аккаунт")
+		return
+	}
+	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
+	now := s.now()
+	user, err := queries.CreateUser(r.Context(), dbgen.CreateUserParams{
+		ID: s.newID(), Username: input.Username, Email: input.Email, DisplayName: input.DisplayName, PasswordHash: hash, CreatedAt: now,
 	})
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "unique") {
-			writeError(w, http.StatusConflict, "Аккаунт с таким email уже существует")
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "Email или username уже занят")
 			return
 		}
 		slog.Error("create user", "error", err)
+		writeError(w, http.StatusInternalServerError, "Не удалось создать аккаунт")
+		return
+	}
+	if _, err := queries.CreateUserSettings(r.Context(), dbgen.CreateUserSettingsParams{UserID: user.ID, UpdatedAt: now}); err != nil {
+		slog.Error("create user settings", "error", err)
+		writeError(w, http.StatusInternalServerError, "Не удалось создать аккаунт")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		slog.Error("commit user", "error", err)
 		writeError(w, http.StatusInternalServerError, "Не удалось создать аккаунт")
 		return
 	}
@@ -222,7 +268,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID str
 	}
 	now := s.now()
 	if err := s.queries.CreateSession(r.Context(), dbgen.CreateSessionParams{
-		TokenHash: hash, UserID: userID, ExpiresAt: now.Add(sessionTTL).Unix(), CreatedAt: now.Unix(),
+		TokenHash: hash, UserID: userID, ExpiresAt: now.Add(sessionTTL), CreatedAt: now,
 	}); err != nil {
 		return err
 	}
@@ -239,11 +285,12 @@ type createRoomRequest struct {
 }
 
 type roomResponse struct {
-	ID         string `json:"id"`
-	InviteCode string `json:"invite_code"`
-	Name       string `json:"name"`
-	OwnerID    string `json:"owner_id"`
-	CreatedAt  int64  `json:"created_at"`
+	ID         string    `json:"id"`
+	InviteCode string    `json:"invite_code"`
+	Name       string    `json:"name"`
+	OwnerID    string    `json:"owner_id"`
+	Kind       string    `json:"kind"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 func (s *Server) createRoom(w http.ResponseWriter, r *http.Request) {
@@ -261,11 +308,30 @@ func (s *Server) createRoom(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Не удалось создать приглашение")
 		return
 	}
-	room, err := s.queries.CreateRoom(r.Context(), dbgen.CreateRoomParams{
-		ID: s.newID(), InviteCode: invite, Name: input.Name, OwnerID: currentUser(r).ID, CreatedAt: s.now().Unix(),
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Не удалось создать комнату")
+		return
+	}
+	defer tx.Rollback()
+	queries := s.queries.WithTx(tx)
+	now := s.now()
+	ownerID := currentUser(r).ID
+	room, err := queries.CreateRoom(r.Context(), dbgen.CreateRoomParams{
+		ID: s.newID(), InviteCode: invite, Name: input.Name, OwnerID: ownerID, Kind: "group", CreatedAt: now,
 	})
 	if err != nil {
 		slog.Error("create room", "error", err)
+		writeError(w, http.StatusInternalServerError, "Не удалось создать комнату")
+		return
+	}
+	if err := queries.AddRoomMember(r.Context(), dbgen.AddRoomMemberParams{RoomID: room.ID, UserID: ownerID, CreatedAt: now}); err != nil {
+		slog.Error("add room owner", "error", err)
+		writeError(w, http.StatusInternalServerError, "Не удалось создать комнату")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		slog.Error("commit room", "error", err)
 		writeError(w, http.StatusInternalServerError, "Не удалось создать комнату")
 		return
 	}
@@ -285,6 +351,13 @@ func (s *Server) roomToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := currentUser(r)
+	if room.Kind == "direct" {
+		member, err := s.queries.IsRoomMember(r.Context(), dbgen.IsRoomMemberParams{RoomID: room.ID, UserID: user.ID})
+		if err != nil || !member {
+			writeError(w, http.StatusForbidden, "Этот звонок доступен только его участникам")
+			return
+		}
+	}
 	token, err := s.issuer.Issue(room.ID, user.ID, user.DisplayName)
 	if err != nil {
 		slog.Error("issue livekit token", "error", err)
@@ -312,10 +385,26 @@ func (s *Server) findRoom(w http.ResponseWriter, r *http.Request) (dbgen.Room, b
 		writeError(w, http.StatusInternalServerError, "Не удалось загрузить комнату")
 		return dbgen.Room{}, false
 	}
+	if room.Kind == "direct" {
+		member, err := s.queries.IsRoomMember(r.Context(), dbgen.IsRoomMemberParams{RoomID: room.ID, UserID: currentUser(r).ID})
+		if err != nil {
+			slog.Error("check room membership", "error", err)
+			writeError(w, http.StatusInternalServerError, "Не удалось проверить доступ к звонку")
+			return dbgen.Room{}, false
+		}
+		if !member {
+			writeError(w, http.StatusNotFound, "Комната не найдена")
+			return dbgen.Room{}, false
+		}
+	}
 	return room, true
 }
 
-func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	if err := s.db.PingContext(r.Context()); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "База данных недоступна")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -351,9 +440,18 @@ func currentUser(r *http.Request) dbgen.User {
 }
 
 func publicUser(user dbgen.User) userResponse {
-	return userResponse{ID: user.ID, Email: user.Email, DisplayName: user.DisplayName}
+	return userResponse{ID: user.ID, Username: user.Username, Email: user.Email, DisplayName: user.DisplayName}
 }
 
 func publicRoom(room dbgen.Room) roomResponse {
-	return roomResponse{ID: room.ID, InviteCode: room.InviteCode, Name: room.Name, OwnerID: room.OwnerID, CreatedAt: room.CreatedAt}
+	return roomResponse{ID: room.ID, InviteCode: room.InviteCode, Name: room.Name, OwnerID: room.OwnerID, Kind: room.Kind, CreatedAt: room.CreatedAt}
+}
+
+func normalizeUsername(value string) string {
+	return strings.ToLower(strings.TrimSpace(strings.TrimPrefix(value, "@")))
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

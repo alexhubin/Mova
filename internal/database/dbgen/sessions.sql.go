@@ -7,18 +7,19 @@ package dbgen
 
 import (
 	"context"
+	"time"
 )
 
 const createSession = `-- name: CreateSession :exec
 INSERT INTO sessions (token_hash, user_id, expires_at, created_at)
-VALUES (?, ?, ?, ?)
+VALUES ($1, $2, $3, $4)
 `
 
 type CreateSessionParams struct {
-	TokenHash string `json:"token_hash"`
-	UserID    string `json:"user_id"`
-	ExpiresAt int64  `json:"expires_at"`
-	CreatedAt int64  `json:"created_at"`
+	TokenHash string    `json:"token_hash"`
+	UserID    string    `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
@@ -32,16 +33,16 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 }
 
 const deleteExpiredSessions = `-- name: DeleteExpiredSessions :exec
-DELETE FROM sessions WHERE expires_at <= ?
+DELETE FROM sessions WHERE expires_at <= $1
 `
 
-func (q *Queries) DeleteExpiredSessions(ctx context.Context, expiresAt int64) error {
+func (q *Queries) DeleteExpiredSessions(ctx context.Context, expiresAt time.Time) error {
 	_, err := q.db.ExecContext(ctx, deleteExpiredSessions, expiresAt)
 	return err
 }
 
 const deleteSession = `-- name: DeleteSession :exec
-DELETE FROM sessions WHERE token_hash = ?
+DELETE FROM sessions WHERE token_hash = $1
 `
 
 func (q *Queries) DeleteSession(ctx context.Context, tokenHash string) error {
@@ -49,16 +50,25 @@ func (q *Queries) DeleteSession(ctx context.Context, tokenHash string) error {
 	return err
 }
 
+const deleteUserSessions = `-- name: DeleteUserSessions :exec
+DELETE FROM sessions WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserSessions(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, deleteUserSessions, userID)
+	return err
+}
+
 const getSessionUser = `-- name: GetSessionUser :one
-SELECT u.id, u.email, u.display_name, u.password_hash, u.created_at FROM sessions s
+SELECT u.id, u.username, u.email, u.display_name, u.password_hash, u.created_at, u.updated_at FROM sessions s
 JOIN users u ON u.id = s.user_id
-WHERE s.token_hash = ? AND s.expires_at > ?
+WHERE s.token_hash = $1 AND s.expires_at > $2
 LIMIT 1
 `
 
 type GetSessionUserParams struct {
-	TokenHash string `json:"token_hash"`
-	ExpiresAt int64  `json:"expires_at"`
+	TokenHash string    `json:"token_hash"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 func (q *Queries) GetSessionUser(ctx context.Context, arg GetSessionUserParams) (User, error) {
@@ -66,10 +76,12 @@ func (q *Queries) GetSessionUser(ctx context.Context, arg GetSessionUserParams) 
 	var i User
 	err := row.Scan(
 		&i.ID,
+		&i.Username,
 		&i.Email,
 		&i.DisplayName,
 		&i.PasswordHash,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

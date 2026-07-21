@@ -1,16 +1,18 @@
 -- name: CreateSession :exec
 INSERT INTO sessions (token_hash, user_id, expires_at, created_at)
-VALUES (?, ?, ?, ?);
+VALUES ($1, $2, $3, $4);
 
 -- name: GetSessionUser :one
 SELECT u.* FROM sessions s
 JOIN users u ON u.id = s.user_id
-WHERE s.token_hash = ? AND s.expires_at > ?
+WHERE s.token_hash = $1 AND s.expires_at > $2
 LIMIT 1;
 
 -- name: DeleteSession :exec
-DELETE FROM sessions WHERE token_hash = ?;
+DELETE FROM sessions WHERE token_hash = $1;
+
+-- name: DeleteUserSessions :exec
+DELETE FROM sessions WHERE user_id = $1;
 
 -- name: DeleteExpiredSessions :exec
-DELETE FROM sessions WHERE expires_at <= ?;
-
+DELETE FROM sessions WHERE expires_at <= $1;

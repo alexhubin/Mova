@@ -7,25 +7,28 @@ package dbgen
 
 import (
 	"context"
+	"time"
 )
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (id, email, display_name, password_hash, created_at)
-VALUES (?, ?, ?, ?, ?)
-RETURNING id, email, display_name, password_hash, created_at
+INSERT INTO users (id, username, email, display_name, password_hash, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $6)
+RETURNING id, username, email, display_name, password_hash, created_at, updated_at
 `
 
 type CreateUserParams struct {
-	ID           string `json:"id"`
-	Email        string `json:"email"`
-	DisplayName  string `json:"display_name"`
-	PasswordHash string `json:"password_hash"`
-	CreatedAt    int64  `json:"created_at"`
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	Email        string    `json:"email"`
+	DisplayName  string    `json:"display_name"`
+	PasswordHash string    `json:"password_hash"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
 	row := q.db.QueryRowContext(ctx, createUser,
 		arg.ID,
+		arg.Username,
 		arg.Email,
 		arg.DisplayName,
 		arg.PasswordHash,
@@ -34,33 +37,55 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	var i User
 	err := row.Scan(
 		&i.ID,
+		&i.Username,
 		&i.Email,
 		&i.DisplayName,
 		&i.PasswordHash,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, display_name, password_hash, created_at FROM users WHERE email = ? COLLATE NOCASE LIMIT 1
+const createUserSettings = `-- name: CreateUserSettings :one
+INSERT INTO user_settings (user_id, video_quality, updated_at)
+VALUES ($1, 'high', $2)
+RETURNING user_id, video_quality, updated_at
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
-	row := q.db.QueryRowContext(ctx, getUserByEmail, email)
+type CreateUserSettingsParams struct {
+	UserID    string    `json:"user_id"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (q *Queries) CreateUserSettings(ctx context.Context, arg CreateUserSettingsParams) (UserSetting, error) {
+	row := q.db.QueryRowContext(ctx, createUserSettings, arg.UserID, arg.UpdatedAt)
+	var i UserSetting
+	err := row.Scan(&i.UserID, &i.VideoQuality, &i.UpdatedAt)
+	return i, err
+}
+
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT id, username, email, display_name, password_hash, created_at, updated_at FROM users WHERE lower(email) = lower($1) LIMIT 1
+`
+
+func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserByEmail, lower)
 	var i User
 	err := row.Scan(
 		&i.ID,
+		&i.Username,
 		&i.Email,
 		&i.DisplayName,
 		&i.PasswordHash,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, display_name, password_hash, created_at FROM users WHERE id = ? LIMIT 1
+SELECT id, username, email, display_name, password_hash, created_at, updated_at FROM users WHERE id = $1 LIMIT 1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -68,10 +93,180 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 	var i User
 	err := row.Scan(
 		&i.ID,
+		&i.Username,
 		&i.Email,
 		&i.DisplayName,
 		&i.PasswordHash,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const getUserByUsername = `-- name: GetUserByUsername :one
+SELECT id, username, email, display_name, password_hash, created_at, updated_at FROM users WHERE lower(username) = lower($1) LIMIT 1
+`
+
+func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserByUsername, lower)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.DisplayName,
+		&i.PasswordHash,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getUserSettings = `-- name: GetUserSettings :one
+SELECT user_id, video_quality, updated_at FROM user_settings WHERE user_id = $1
+`
+
+func (q *Queries) GetUserSettings(ctx context.Context, userID string) (UserSetting, error) {
+	row := q.db.QueryRowContext(ctx, getUserSettings, userID)
+	var i UserSetting
+	err := row.Scan(&i.UserID, &i.VideoQuality, &i.UpdatedAt)
+	return i, err
+}
+
+const searchUsers = `-- name: SearchUsers :many
+SELECT
+    u.id,
+    u.username,
+    u.display_name,
+    CASE
+        WHEN EXISTS (
+            SELECT 1 FROM friendships f
+            WHERE (f.user_id = $1 AND f.friend_id = u.id)
+               OR (f.user_id = u.id AND f.friend_id = $1)
+        ) THEN 'friends'
+        WHEN EXISTS (
+            SELECT 1 FROM friend_requests fr
+            WHERE fr.sender_id = $1 AND fr.receiver_id = u.id
+        ) THEN 'request_sent'
+        WHEN EXISTS (
+            SELECT 1 FROM friend_requests fr
+            WHERE fr.sender_id = u.id AND fr.receiver_id = $1
+        ) THEN 'request_received'
+        ELSE 'none'
+    END AS relationship
+FROM users u
+WHERE u.id <> $1
+  AND (lower(u.username) LIKE '%' || lower($2) || '%' OR lower(u.display_name) LIKE '%' || lower($2) || '%')
+ORDER BY CASE WHEN lower(u.username) = lower($2) THEN 0 ELSE 1 END, lower(u.username)
+LIMIT 20
+`
+
+type SearchUsersParams struct {
+	UserID string `json:"user_id"`
+	Lower  string `json:"lower"`
+}
+
+type SearchUsersRow struct {
+	ID           string `json:"id"`
+	Username     string `json:"username"`
+	DisplayName  string `json:"display_name"`
+	Relationship string `json:"relationship"`
+}
+
+func (q *Queries) SearchUsers(ctx context.Context, arg SearchUsersParams) ([]SearchUsersRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchUsers, arg.UserID, arg.Lower)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchUsersRow{}
+	for rows.Next() {
+		var i SearchUsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Username,
+			&i.DisplayName,
+			&i.Relationship,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updatePassword = `-- name: UpdatePassword :exec
+UPDATE users SET password_hash = $2, updated_at = $3 WHERE id = $1
+`
+
+type UpdatePasswordParams struct {
+	ID           string    `json:"id"`
+	PasswordHash string    `json:"password_hash"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error {
+	_, err := q.db.ExecContext(ctx, updatePassword, arg.ID, arg.PasswordHash, arg.UpdatedAt)
+	return err
+}
+
+const updateProfile = `-- name: UpdateProfile :one
+UPDATE users
+SET username = $2, display_name = $3, updated_at = $4
+WHERE id = $1
+RETURNING id, username, email, display_name, password_hash, created_at, updated_at
+`
+
+type UpdateProfileParams struct {
+	ID          string    `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, updateProfile,
+		arg.ID,
+		arg.Username,
+		arg.DisplayName,
+		arg.UpdatedAt,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.DisplayName,
+		&i.PasswordHash,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateUserSettings = `-- name: UpdateUserSettings :one
+INSERT INTO user_settings (user_id, video_quality, updated_at)
+VALUES ($1, $2, $3)
+ON CONFLICT (user_id) DO UPDATE
+SET video_quality = EXCLUDED.video_quality, updated_at = EXCLUDED.updated_at
+RETURNING user_id, video_quality, updated_at
+`
+
+type UpdateUserSettingsParams struct {
+	UserID       string    `json:"user_id"`
+	VideoQuality string    `json:"video_quality"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func (q *Queries) UpdateUserSettings(ctx context.Context, arg UpdateUserSettingsParams) (UserSetting, error) {
+	row := q.db.QueryRowContext(ctx, updateUserSettings, arg.UserID, arg.VideoQuality, arg.UpdatedAt)
+	var i UserSetting
+	err := row.Scan(&i.UserID, &i.VideoQuality, &i.UpdatedAt)
 	return i, err
 }

@@ -12,13 +12,9 @@ FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S -g 10001 mova \
-    && adduser -S -D -H -u 10001 -G mova mova \
-    && mkdir -p /data \
-    && chown mova:mova /data
+    && adduser -S -D -H -u 10001 -G mova mova
 
 COPY --from=build /out/mova-api /usr/local/bin/mova-api
 USER mova
 EXPOSE 8080
-VOLUME ["/data"]
 ENTRYPOINT ["/usr/local/bin/mova-api"]
-
