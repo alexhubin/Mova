@@ -26,6 +26,7 @@ export function RoomPage() {
   const { inviteCode } = useParams({ from: '/r/$inviteCode' })
   const navigate = useNavigate()
   const audioHost = useRef<HTMLDivElement>(null)
+  const activeCall = useRef<Room | null>(null)
   const [call, setCall] = useState<Room | null>(null)
   const [, render] = useState(0)
   const [copied, setCopied] = useState(false)
@@ -39,12 +40,33 @@ export function RoomPage() {
     enabled: Boolean(user),
   })
 
-  useEffect(() => () => { void call?.disconnect() }, [call])
+  useEffect(() => {
+    const closeActiveCall = () => {
+      const room = activeCall.current
+      activeCall.current = null
+      if (!room) return
+
+      stopLocalMedia(room)
+      void room.disconnect()
+    }
+
+    window.addEventListener('pagehide', closeActiveCall)
+    window.addEventListener('beforeunload', closeActiveCall)
+    window.addEventListener('freeze', closeActiveCall)
+
+    return () => {
+      window.removeEventListener('pagehide', closeActiveCall)
+      window.removeEventListener('beforeunload', closeActiveCall)
+      window.removeEventListener('freeze', closeActiveCall)
+      closeActiveCall()
+    }
+  }, [])
 
   const join = useMutation({
     mutationFn: async () => {
       const credentials = await api<RoomToken>(`/api/rooms/${inviteCode}/token`, { method: 'POST' })
       const nextCall = new Room({ adaptiveStream: true, dynacast: true, disconnectOnPageLeave: true })
+      activeCall.current = nextCall
 
       const refresh = () => render((value) => value + 1)
       const events = [
@@ -74,9 +96,20 @@ export function RoomPage() {
         refresh()
       })
 
-      await nextCall.connect(credentials.server_url, credentials.token)
+      try {
+        await nextCall.connect(credentials.server_url, credentials.token)
+      } catch (error) {
+        if (activeCall.current === nextCall) activeCall.current = null
+        stopLocalMedia(nextCall)
+        void nextCall.disconnect()
+        throw error
+      }
+
+      if (activeCall.current !== nextCall) return nextCall
       setCall(nextCall)
       await nextCall.startAudio()
+      if (activeCall.current !== nextCall) return nextCall
+
       try {
         await nextCall.localParticipant.setMicrophoneEnabled(true)
       } catch {
@@ -135,7 +168,12 @@ export function RoomPage() {
   }
 
   async function leave() {
-    await call?.disconnect()
+    const room = activeCall.current
+    activeCall.current = null
+    if (room) {
+      stopLocalMedia(room)
+      await room.disconnect()
+    }
     setCall(null)
     await navigate({ to: '/' })
   }
@@ -242,6 +280,10 @@ export function RoomPage() {
       {connected && controlError && <div className="room-error" role="alert">{controlError}</div>}
     </main>
   )
+}
+
+function stopLocalMedia(room: Room) {
+  room.localParticipant.getTrackPublications().forEach((publication) => publication.track?.stop())
 }
 
 function ParticipantRow({ participant, local }: { participant: Participant; local: boolean }) {
