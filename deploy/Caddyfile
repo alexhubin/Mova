@@ -1,0 +1,18 @@
+{$APP_ADDRESS:http://localhost} {
+    encode zstd gzip
+
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy same-origin
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+
+    @api path /api/*
+    reverse_proxy @api api:8080
+    reverse_proxy web:8080
+}
+
+{$LIVEKIT_ADDRESS:http://livekit.localhost} {
+    reverse_proxy host.docker.internal:7880
+}
