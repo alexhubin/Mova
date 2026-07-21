@@ -28,6 +28,7 @@ import (
 const (
 	sessionCookie = "mova_session"
 	sessionTTL    = 30 * 24 * time.Hour
+	presenceTTL   = 15 * time.Second
 	maxBodyBytes  = 64 << 10
 )
 
@@ -134,9 +135,11 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "Требуется вход")
 			return
 		}
+		now := s.now()
+		tokenHash := auth.HashSessionToken(cookie.Value)
 		user, err := s.queries.GetSessionUser(r.Context(), dbgen.GetSessionUserParams{
-			TokenHash: auth.HashSessionToken(cookie.Value),
-			ExpiresAt: s.now(),
+			TokenHash: tokenHash,
+			ExpiresAt: now,
 		})
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusUnauthorized, "Сессия истекла")
@@ -146,6 +149,9 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 			slog.Error("load session", "error", err)
 			writeError(w, http.StatusInternalServerError, "Не удалось проверить сессию")
 			return
+		}
+		if err := s.queries.TouchSession(r.Context(), dbgen.TouchSessionParams{TokenHash: tokenHash, LastSeenAt: now}); err != nil {
+			slog.Warn("touch session presence", "error", err)
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userContextKey, user)))
 	})

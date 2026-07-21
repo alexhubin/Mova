@@ -54,9 +54,36 @@ func TestPersistentAccountsFriendsAndDirectCall(t *testing.T) {
 	}
 	var annaFriends friendsResponse
 	decodeResponse(t, response, &annaFriends)
-	if len(annaFriends.Friends) != 1 || annaFriends.Friends[0].ID != boris.ID {
+	if len(annaFriends.Friends) != 1 || annaFriends.Friends[0].ID != boris.ID || !annaFriends.Friends[0].Online {
 		t.Fatalf("unexpected friends: %+v", annaFriends.Friends)
 	}
+
+	response = doJSON(t, borisClient, http.MethodPost, server.URL+"/api/auth/logout", nil)
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("logout Boris status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	response.Body.Close()
+
+	response = doJSON(t, annaClient, http.MethodGet, server.URL+"/api/friends", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("list offline friends status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	decodeResponse(t, response, &annaFriends)
+	if len(annaFriends.Friends) != 1 || annaFriends.Friends[0].Online {
+		t.Fatalf("Boris should be offline: %+v", annaFriends.Friends)
+	}
+
+	response = doJSON(t, annaClient, http.MethodPost, server.URL+"/api/calls", map[string]string{"user_id": boris.ID})
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("offline call status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	response.Body.Close()
+
+	response = doJSON(t, borisClient, http.MethodPost, server.URL+"/api/auth/login", map[string]string{"email": "boris@example.com", "password": "another-secure-password"})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("login Boris status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	response.Body.Close()
 
 	response = doJSON(t, annaClient, http.MethodPost, server.URL+"/api/calls", map[string]string{"user_id": boris.ID})
 	if response.StatusCode != http.StatusCreated {

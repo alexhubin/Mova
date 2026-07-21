@@ -70,6 +70,17 @@ func (s *Server) createDirectCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "Звонить можно только друзьям")
 		return
 	}
+	now := s.now()
+	online, err := s.queries.IsUserOnline(r.Context(), dbgen.IsUserOnlineParams{UserID: callee.ID, ExpiresAt: now, LastSeenAt: now.Add(-presenceTTL)})
+	if err != nil {
+		slog.Error("check call presence", "error", err)
+		writeError(w, http.StatusInternalServerError, "Не удалось проверить статус пользователя")
+		return
+	}
+	if !online {
+		writeError(w, http.StatusConflict, "Пользователь не в сети")
+		return
+	}
 	if _, err := s.queries.GetOpenCallForUser(r.Context(), caller.ID); err == nil {
 		writeError(w, http.StatusConflict, "Сначала завершите текущий звонок")
 		return
@@ -107,7 +118,7 @@ func (s *Server) createDirectCall(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	queries := s.queries.WithTx(tx)
-	now := s.now()
+	now = s.now()
 	room, err := queries.CreateRoom(r.Context(), dbgen.CreateRoomParams{
 		ID: s.newID(), InviteCode: invite, Name: caller.DisplayName + " × " + callee.DisplayName, OwnerID: caller.ID, Kind: "direct", CreatedAt: now,
 	})

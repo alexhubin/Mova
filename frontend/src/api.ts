@@ -25,6 +25,7 @@ export type FriendUser = {
   username: string
   display_name: string
   relationship?: 'none' | 'friends' | 'request_sent' | 'request_received'
+  online: boolean
 }
 
 export type FriendRequest = {

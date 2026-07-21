@@ -17,6 +17,7 @@ type friendUserResponse struct {
 	Username     string `json:"username"`
 	DisplayName  string `json:"display_name"`
 	Relationship string `json:"relationship,omitempty"`
+	Online       bool   `json:"online"`
 }
 
 type friendRequestResponse struct {
@@ -56,7 +57,8 @@ func (s *Server) searchUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listFriends(w http.ResponseWriter, r *http.Request) {
 	userID := currentUser(r).ID
-	friends, err := s.queries.ListFriends(r.Context(), userID)
+	now := s.now()
+	friends, err := s.queries.ListFriends(r.Context(), dbgen.ListFriendsParams{UserID: userID, ExpiresAt: now, LastSeenAt: now.Add(-presenceTTL)})
 	if err != nil {
 		slog.Error("list friends", "error", err)
 		writeError(w, http.StatusInternalServerError, "Не удалось загрузить друзей")
@@ -81,7 +83,7 @@ func (s *Server) listFriends(w http.ResponseWriter, r *http.Request) {
 		Outgoing: make([]friendRequestResponse, 0, len(outgoing)),
 	}
 	for _, friend := range friends {
-		response.Friends = append(response.Friends, friendUserResponse{ID: friend.ID, Username: friend.Username, DisplayName: friend.DisplayName})
+		response.Friends = append(response.Friends, friendUserResponse{ID: friend.ID, Username: friend.Username, DisplayName: friend.DisplayName, Online: friend.Online})
 	}
 	for _, request := range incoming {
 		response.Incoming = append(response.Incoming, friendRequestResponse{ID: request.ID, CreatedAt: request.CreatedAt, User: friendUserResponse{ID: request.UserID, Username: request.Username, DisplayName: request.DisplayName}})

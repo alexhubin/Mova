@@ -87,6 +87,9 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .friend-list { display: grid; gap: .45rem; margin-top: 1.2rem; }
 .compact-list { max-height: 18rem; overflow: auto; }
 .friend-row { display: flex; min-width: 0; align-items: center; gap: .7rem; border-radius: 1rem; padding: .65rem; background: #fff7; }
+.friend-row.offline-row .participant-avatar { filter: grayscale(.65); opacity: .72; }
+.presence-dot { display: inline-block; width: .48rem; height: .48rem; margin-left: .2rem; border-radius: 50%; background: #9ca49f; }
+.presence-dot.online { background: #42a56a; box-shadow: 0 0 0 3px #42a56a1f; }
 .muted-row { opacity: .72; }
 .friend-call, .mini-text-action { display: inline-flex; min-height: 2.45rem; align-items: center; justify-content: center; gap: .4rem; border: 0; border-radius: 999px; padding: 0 .85rem; color: var(--color-paper); background: var(--color-moss); cursor: pointer; font-size: .72rem; font-weight: 700; }
 .mini-text-action { color: var(--color-ink); background: var(--color-paper-deep); }

@@ -42,11 +42,20 @@ SELECT EXISTS (
 ) AS is_friend;
 
 -- name: ListFriends :many
-SELECT u.id, u.username, u.display_name, f.created_at
+SELECT
+    u.id,
+    u.username,
+    u.display_name,
+    f.created_at,
+    EXISTS (
+        SELECT 1
+        FROM sessions s
+        WHERE s.user_id = u.id AND s.expires_at > $2 AND s.last_seen_at >= $3
+    ) AS online
 FROM friendships f
 JOIN users u ON u.id = CASE WHEN f.user_id = $1 THEN f.friend_id ELSE f.user_id END
 WHERE f.user_id = $1 OR f.friend_id = $1
-ORDER BY lower(u.display_name), lower(u.username);
+ORDER BY online DESC, lower(u.display_name), lower(u.username);
 
 -- name: DeleteFriendship :exec
 DELETE FROM friendships

@@ -11,8 +11,8 @@ import (
 )
 
 const createSession = `-- name: CreateSession :exec
-INSERT INTO sessions (token_hash, user_id, expires_at, created_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO sessions (token_hash, user_id, expires_at, created_at, last_seen_at)
+VALUES ($1, $2, $3, $4, $4)
 `
 
 type CreateSessionParams struct {
@@ -84,4 +84,39 @@ func (q *Queries) GetSessionUser(ctx context.Context, arg GetSessionUserParams) 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const isUserOnline = `-- name: IsUserOnline :one
+SELECT EXISTS (
+    SELECT 1
+    FROM sessions
+    WHERE user_id = $1 AND expires_at > $2 AND last_seen_at >= $3
+) AS online
+`
+
+type IsUserOnlineParams struct {
+	UserID     string    `json:"user_id"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
+func (q *Queries) IsUserOnline(ctx context.Context, arg IsUserOnlineParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, isUserOnline, arg.UserID, arg.ExpiresAt, arg.LastSeenAt)
+	var online bool
+	err := row.Scan(&online)
+	return online, err
+}
+
+const touchSession = `-- name: TouchSession :exec
+UPDATE sessions SET last_seen_at = $2 WHERE token_hash = $1
+`
+
+type TouchSessionParams struct {
+	TokenHash  string    `json:"token_hash"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
+func (q *Queries) TouchSession(ctx context.Context, arg TouchSessionParams) error {
+	_, err := q.db.ExecContext(ctx, touchSession, arg.TokenHash, arg.LastSeenAt)
+	return err
 }

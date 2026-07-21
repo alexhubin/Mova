@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUpRight, Check, Headphones, MonitorUp, Phone, Plus, Search, UserPlus, X } from 'lucide-react'
+import { ArrowUpRight, Check, Headphones, MonitorUp, Phone, PhoneOff, Plus, Search, UserPlus, X } from 'lucide-react'
 import { api, currentUser, type DirectCall, type FriendsPayload, type FriendUser, type RoomInfo } from '../api'
 import { initials } from '../utils'
 
@@ -39,7 +39,7 @@ function Dashboard({ name, username }: { name: string; username: string }) {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [roomName, setRoomName] = useState('')
-  const friends = useQuery({ queryKey: ['friends'], queryFn: () => api<FriendsPayload>('/api/friends') })
+  const friends = useQuery({ queryKey: ['friends'], queryFn: () => api<FriendsPayload>('/api/friends'), refetchInterval: 5_000 })
   const calls = useQuery({ queryKey: ['calls'], queryFn: () => api<DirectCall[]>('/api/calls'), refetchInterval: 2_000 })
   const searchQuery = useQuery({
     queryKey: ['user-search', search],
@@ -115,7 +115,7 @@ function Dashboard({ name, username }: { name: string; username: string }) {
 }
 
 function FriendRow({ friend, onCall, busy }: { friend: FriendUser; onCall: () => void; busy: boolean }) {
-  return <div className="friend-row"><Avatar name={friend.display_name} /><UserLabel user={friend} /><button className="friend-call" onClick={onCall} disabled={busy} aria-label={`Позвонить ${friend.display_name}`}><Phone size={18} /><span>Позвонить</span></button></div>
+  return <div className={`friend-row ${friend.online ? '' : 'offline-row'}`}><Avatar name={friend.display_name} /><UserLabel user={friend} status={friend.online ? 'В сети' : 'Не в сети'} online={friend.online} /><button className="friend-call" onClick={onCall} disabled={busy || !friend.online} aria-label={friend.online ? `Позвонить ${friend.display_name}` : `${friend.display_name} не в сети`} title={friend.online ? 'Позвонить' : 'Пользователь не в сети'}>{friend.online ? <Phone size={18} /> : <PhoneOff size={18} />}<span>{friend.online ? 'Позвонить' : 'Не в сети'}</span></button></div>
 }
 
 function SearchRow({ person, onAdd, busy }: { person: FriendUser; onAdd: () => void; busy: boolean }) {
@@ -125,5 +125,5 @@ function SearchRow({ person, onAdd, busy }: { person: FriendUser; onAdd: () => v
 }
 
 function Avatar({ name }: { name: string }) { return <div className="participant-avatar">{initials(name)}</div> }
-function UserLabel({ user }: { user: FriendUser }) { return <div className="min-w-0 flex-1"><strong className="block truncate text-sm">{user.display_name}</strong><span className="text-xs text-ink-muted">@{user.username}</span></div> }
+function UserLabel({ user, status, online }: { user: FriendUser; status?: string; online?: boolean }) { return <div className="min-w-0 flex-1"><strong className="block truncate text-sm">{user.display_name}</strong><span className="flex items-center gap-1.5 text-xs text-ink-muted">@{user.username}{status && <><i className={`presence-dot ${online ? 'online' : ''}`} />{status}</>}</span></div> }
 function EmptyList({ text }: { text: string }) { return <p className="empty-list">{text}</p> }

@@ -148,22 +148,38 @@ func (q *Queries) IsFriend(ctx context.Context, arg IsFriendParams) (bool, error
 }
 
 const listFriends = `-- name: ListFriends :many
-SELECT u.id, u.username, u.display_name, f.created_at
+SELECT
+    u.id,
+    u.username,
+    u.display_name,
+    f.created_at,
+    EXISTS (
+        SELECT 1
+        FROM sessions s
+        WHERE s.user_id = u.id AND s.expires_at > $2 AND s.last_seen_at >= $3
+    ) AS online
 FROM friendships f
 JOIN users u ON u.id = CASE WHEN f.user_id = $1 THEN f.friend_id ELSE f.user_id END
 WHERE f.user_id = $1 OR f.friend_id = $1
-ORDER BY lower(u.display_name), lower(u.username)
+ORDER BY online DESC, lower(u.display_name), lower(u.username)
 `
+
+type ListFriendsParams struct {
+	UserID     string    `json:"user_id"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+}
 
 type ListFriendsRow struct {
 	ID          string    `json:"id"`
 	Username    string    `json:"username"`
 	DisplayName string    `json:"display_name"`
 	CreatedAt   time.Time `json:"created_at"`
+	Online      bool      `json:"online"`
 }
 
-func (q *Queries) ListFriends(ctx context.Context, userID string) ([]ListFriendsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listFriends, userID)
+func (q *Queries) ListFriends(ctx context.Context, arg ListFriendsParams) ([]ListFriendsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listFriends, arg.UserID, arg.ExpiresAt, arg.LastSeenAt)
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +192,7 @@ func (q *Queries) ListFriends(ctx context.Context, userID string) ([]ListFriends
 			&i.Username,
 			&i.DisplayName,
 			&i.CreatedAt,
+			&i.Online,
 		); err != nil {
 			return nil, err
 		}
