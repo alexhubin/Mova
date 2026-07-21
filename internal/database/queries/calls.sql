@@ -10,6 +10,18 @@ WHERE status IN ('ringing', 'active')
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: GetOpenCallForUser :one
+SELECT * FROM direct_calls
+WHERE status IN ('ringing', 'active') AND (caller_id = $1 OR callee_id = $1)
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: ExpireStaleCalls :exec
+UPDATE direct_calls
+SET status = 'ended', ended_at = $1
+WHERE (status = 'ringing' AND created_at < $2)
+   OR (status = 'active' AND created_at < $3);
+
 -- name: GetCallForParticipant :one
 SELECT * FROM direct_calls
 WHERE id = $1 AND (caller_id = $2 OR callee_id = $2)

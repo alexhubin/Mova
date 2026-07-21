@@ -25,6 +25,7 @@ type callResponse struct {
 }
 
 func (s *Server) listCalls(w http.ResponseWriter, r *http.Request) {
+	s.expireStaleCalls(r)
 	rows, err := s.queries.ListOpenCallsForUser(r.Context(), currentUser(r).ID)
 	if err != nil {
 		slog.Error("list calls", "error", err)
@@ -44,6 +45,7 @@ func (s *Server) createDirectCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	caller := currentUser(r)
+	s.expireStaleCalls(r)
 	if input.UserID == caller.ID || input.UserID == "" {
 		writeError(w, http.StatusUnprocessableEntity, "Выберите друга для звонка")
 		return
@@ -66,6 +68,22 @@ func (s *Server) createDirectCall(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isFriend {
 		writeError(w, http.StatusForbidden, "Звонить можно только друзьям")
+		return
+	}
+	if _, err := s.queries.GetOpenCallForUser(r.Context(), caller.ID); err == nil {
+		writeError(w, http.StatusConflict, "Сначала завершите текущий звонок")
+		return
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		slog.Error("check caller open call", "error", err)
+		writeError(w, http.StatusInternalServerError, "Не удалось начать звонок")
+		return
+	}
+	if _, err := s.queries.GetOpenCallForUser(r.Context(), callee.ID); err == nil {
+		writeError(w, http.StatusConflict, "Пользователь уже участвует в другом звонке")
+		return
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		slog.Error("check callee open call", "error", err)
+		writeError(w, http.StatusInternalServerError, "Не удалось начать звонок")
 		return
 	}
 	if _, err := s.queries.GetOpenCallBetween(r.Context(), dbgen.GetOpenCallBetweenParams{CallerID: caller.ID, CalleeID: callee.ID}); err == nil {
@@ -180,5 +198,14 @@ func callFromRow(row dbgen.ListOpenCallsForUserRow) callResponse {
 	return callResponse{
 		ID: row.ID, Status: row.Status, InviteCode: row.InviteCode, Incoming: row.Incoming, CreatedAt: row.CreatedAt,
 		Peer: friendUserResponse{ID: row.PeerID, Username: row.PeerUsername, DisplayName: row.PeerDisplayName},
+	}
+}
+
+func (s *Server) expireStaleCalls(r *http.Request) {
+	now := s.now()
+	if err := s.queries.ExpireStaleCalls(r.Context(), dbgen.ExpireStaleCallsParams{
+		EndedAt: sql.NullTime{Time: now, Valid: true}, CreatedAt: now.Add(-2 * time.Minute), CreatedAt_2: now.Add(-24 * time.Hour),
+	}); err != nil {
+		slog.Warn("expire stale calls", "error", err)
 	}
 }

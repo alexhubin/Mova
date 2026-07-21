@@ -134,6 +134,24 @@ func (q *Queries) EndDirectCall(ctx context.Context, arg EndDirectCallParams) (D
 	return i, err
 }
 
+const expireStaleCalls = `-- name: ExpireStaleCalls :exec
+UPDATE direct_calls
+SET status = 'ended', ended_at = $1
+WHERE (status = 'ringing' AND created_at < $2)
+   OR (status = 'active' AND created_at < $3)
+`
+
+type ExpireStaleCallsParams struct {
+	EndedAt     sql.NullTime `json:"ended_at"`
+	CreatedAt   time.Time    `json:"created_at"`
+	CreatedAt_2 time.Time    `json:"created_at_2"`
+}
+
+func (q *Queries) ExpireStaleCalls(ctx context.Context, arg ExpireStaleCallsParams) error {
+	_, err := q.db.ExecContext(ctx, expireStaleCalls, arg.EndedAt, arg.CreatedAt, arg.CreatedAt_2)
+	return err
+}
+
 const getCallForParticipant = `-- name: GetCallForParticipant :one
 SELECT id, room_id, caller_id, callee_id, status, created_at, answered_at, ended_at FROM direct_calls
 WHERE id = $1 AND (caller_id = $2 OR callee_id = $2)
@@ -176,6 +194,29 @@ type GetOpenCallBetweenParams struct {
 
 func (q *Queries) GetOpenCallBetween(ctx context.Context, arg GetOpenCallBetweenParams) (DirectCall, error) {
 	row := q.db.QueryRowContext(ctx, getOpenCallBetween, arg.CallerID, arg.CalleeID)
+	var i DirectCall
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.CallerID,
+		&i.CalleeID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.AnsweredAt,
+		&i.EndedAt,
+	)
+	return i, err
+}
+
+const getOpenCallForUser = `-- name: GetOpenCallForUser :one
+SELECT id, room_id, caller_id, callee_id, status, created_at, answered_at, ended_at FROM direct_calls
+WHERE status IN ('ringing', 'active') AND (caller_id = $1 OR callee_id = $1)
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetOpenCallForUser(ctx context.Context, callerID string) (DirectCall, error) {
+	row := q.db.QueryRowContext(ctx, getOpenCallForUser, callerID)
 	var i DirectCall
 	err := row.Scan(
 		&i.ID,
