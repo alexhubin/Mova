@@ -15,11 +15,13 @@ import {
   ConnectionState,
   Room,
   RoomEvent,
+  ScreenSharePresets,
   Track,
   type Participant,
   type TrackPublication,
 } from 'livekit-client'
-import { api, currentUser, type RoomInfo, type RoomToken } from '../api'
+import { api, currentUser, type AccountSettings, type DirectCall, type RoomInfo, type RoomToken } from '../api'
+import { loadDeviceSettings } from '../deviceSettings'
 import { initials, inviteURL } from '../utils'
 
 export function RoomPage() {
@@ -27,6 +29,7 @@ export function RoomPage() {
   const navigate = useNavigate()
   const audioHost = useRef<HTMLDivElement>(null)
   const activeCall = useRef<Room | null>(null)
+  const directCallID = useRef<string | null>(null)
   const [call, setCall] = useState<Room | null>(null)
   const [, render] = useState(0)
   const [copied, setCopied] = useState(false)
@@ -39,15 +42,36 @@ export function RoomPage() {
     queryFn: () => api<RoomInfo>(`/api/rooms/${inviteCode}`),
     enabled: Boolean(user),
   })
+  const settingsQuery = useQuery({
+    queryKey: ['account-settings'],
+    queryFn: () => api<AccountSettings>('/api/account/settings'),
+    enabled: Boolean(user),
+  })
+  const callsQuery = useQuery({
+    queryKey: ['calls'],
+    queryFn: () => api<DirectCall[]>('/api/calls'),
+    enabled: Boolean(user),
+    refetchInterval: 2_000,
+  })
+
+  useEffect(() => {
+    if (roomQuery.data?.kind !== 'direct') {
+      directCallID.current = null
+      return
+    }
+    const matching = callsQuery.data?.find((item) => item.invite_code === inviteCode)
+    if (matching) directCallID.current = matching.id
+  }, [callsQuery.data, inviteCode, roomQuery.data?.kind])
 
   useEffect(() => {
     const closeActiveCall = () => {
       const room = activeCall.current
       activeCall.current = null
-      if (!room) return
-
-      stopLocalMedia(room)
-      void room.disconnect()
+      if (room) {
+        stopLocalMedia(room)
+        void room.disconnect()
+      }
+      endDirectCall(directCallID)
     }
 
     window.addEventListener('pagehide', closeActiveCall)
@@ -110,6 +134,13 @@ export function RoomPage() {
       await nextCall.startAudio()
       if (activeCall.current !== nextCall) return nextCall
 
+      const devices = loadDeviceSettings()
+      if (devices.audioInputId) {
+        await nextCall.switchActiveDevice('audioinput', devices.audioInputId, false).catch(() => undefined)
+      }
+      if (devices.audioOutputId) {
+        await nextCall.switchActiveDevice('audiooutput', devices.audioOutputId, false).catch(() => undefined)
+      }
       try {
         await nextCall.localParticipant.setMicrophoneEnabled(true)
       } catch {
@@ -148,7 +179,14 @@ export function RoomPage() {
     setControlBusy(true)
     setControlError('')
     try {
-      await call.localParticipant.setScreenShareEnabled(!call.localParticipant.isScreenShareEnabled)
+      const enable = !call.localParticipant.isScreenShareEnabled
+      const quality = settingsQuery.data?.video_quality ?? 'high'
+      const resolution = quality === 'low'
+        ? ScreenSharePresets.h720fps15.resolution
+        : quality === 'medium'
+          ? ScreenSharePresets.h1080fps15.resolution
+          : ScreenSharePresets.h1080fps30.resolution
+      await call.localParticipant.setScreenShareEnabled(enable, enable ? { resolution } : undefined)
       render((value) => value + 1)
     } catch (error) {
       setControlError(error instanceof Error ? error.message : 'Демонстрация экрана недоступна в этом браузере')
@@ -173,6 +211,11 @@ export function RoomPage() {
     if (room) {
       stopLocalMedia(room)
       await room.disconnect()
+    }
+    const callID = directCallID.current
+    directCallID.current = null
+    if (callID) {
+      await api<void>(`/api/calls/${callID}/end`, { method: 'POST' }).catch(() => undefined)
     }
     setCall(null)
     await navigate({ to: '/' })
@@ -284,6 +327,13 @@ export function RoomPage() {
 
 function stopLocalMedia(room: Room) {
   room.localParticipant.getTrackPublications().forEach((publication) => publication.track?.stop())
+}
+
+function endDirectCall(callID: { current: string | null }) {
+  const id = callID.current
+  callID.current = null
+  if (!id) return
+  void fetch(`/api/calls/${id}/end`, { method: 'POST', credentials: 'same-origin', keepalive: true })
 }
 
 function ParticipantRow({ participant, local }: { participant: Participant; local: boolean }) {

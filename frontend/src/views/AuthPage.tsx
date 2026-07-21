@@ -10,12 +10,13 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [username, setUsername] = useState('')
   const isRegister = mode === 'register'
 
   const mutation = useMutation({
     mutationFn: () => api<User>(`/api/auth/${mode}`, {
       method: 'POST',
-      body: JSON.stringify({ email, password, ...(isRegister ? { display_name: displayName } : {}) }),
+      body: JSON.stringify({ email, password, ...(isRegister ? { display_name: displayName, username } : {}) }),
     }),
     onSuccess: async (user) => {
       queryClient.setQueryData(['me'], user)
@@ -43,10 +44,16 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }) {
 
         <form onSubmit={submit} className="mt-8 space-y-5">
           {isRegister && (
-            <label className="field-label">
-              Как вас называть
-              <input className="text-input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} minLength={2} maxLength={40} autoComplete="name" required placeholder="Анна" />
-            </label>
+            <>
+              <label className="field-label">
+                Как вас называть
+                <input className="text-input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} minLength={2} maxLength={40} autoComplete="name" required placeholder="Анна" />
+              </label>
+              <label className="field-label">
+                Username
+                <input className="text-input" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())} minLength={3} maxLength={32} pattern="[a-z0-9_]+" autoComplete="username" required placeholder="anna_voice" />
+              </label>
+            </>
           )}
           <label className="field-label">
             Email
@@ -73,4 +80,3 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }) {
     </main>
   )
 }
-

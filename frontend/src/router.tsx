@@ -10,6 +10,8 @@ import { AuthPage } from './views/AuthPage'
 import { HomePage } from './views/HomePage'
 import { RoomPage } from './views/RoomPage'
 import { NotFoundPage } from './views/NotFoundPage'
+import { SettingsPage } from './views/SettingsPage'
+import { IncomingCall } from './ui/IncomingCall'
 
 type RouterContext = { queryClient: QueryClient }
 
@@ -18,6 +20,7 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
     <div className="min-h-dvh">
       <AppHeader />
       <Outlet />
+      <IncomingCall />
     </div>
   ),
   notFoundComponent: NotFoundPage,
@@ -47,7 +50,13 @@ const roomRoute = createRoute({
   component: RoomPage,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, loginRoute, registerRoute, roomRoute])
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: SettingsPage,
+})
+
+const routeTree = rootRoute.addChildren([indexRoute, loginRoute, registerRoute, roomRoute, settingsRoute])
 
 export const router = createRouter({ routeTree, context: { queryClient: undefined! } })
 
@@ -56,4 +65,3 @@ declare module '@tanstack/react-router' {
     router: typeof router
   }
 }
-

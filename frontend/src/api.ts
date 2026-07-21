@@ -1,5 +1,6 @@
 export type User = {
   id: string
+  username: string
   email: string
   display_name: string
 }
@@ -9,13 +10,46 @@ export type RoomInfo = {
   invite_code: string
   name: string
   owner_id: string
-  created_at: number
+  kind: 'group' | 'direct'
+  created_at: string
 }
 
 export type RoomToken = {
   token: string
   server_url: string
   expires_in: number
+}
+
+export type FriendUser = {
+  id: string
+  username: string
+  display_name: string
+  relationship?: 'none' | 'friends' | 'request_sent' | 'request_received'
+}
+
+export type FriendRequest = {
+  id: string
+  user: FriendUser
+  created_at: string
+}
+
+export type FriendsPayload = {
+  friends: FriendUser[]
+  incoming: FriendRequest[]
+  outgoing: FriendRequest[]
+}
+
+export type DirectCall = {
+  id: string
+  status: 'ringing' | 'active'
+  invite_code: string
+  peer: FriendUser
+  incoming: boolean
+  created_at: string
+}
+
+export type AccountSettings = {
+  video_quality: 'low' | 'medium' | 'high'
 }
 
 export class ApiError extends Error {
@@ -60,4 +94,3 @@ export async function currentUser(): Promise<User | null> {
     throw error
   }
 }
-

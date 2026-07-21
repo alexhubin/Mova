@@ -1,6 +1,6 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { LogOut } from 'lucide-react'
+import { LogOut, Settings } from 'lucide-react'
 import { api, currentUser } from '../api'
 
 export function AppHeader() {
@@ -23,7 +23,8 @@ export function AppHeader() {
       </Link>
       {user ? (
         <div className="flex items-center gap-2 sm:gap-4">
-          <span className="hidden text-sm text-ink-muted sm:block">{user.display_name}</span>
+          <span className="hidden text-right sm:block"><strong className="block text-sm">{user.display_name}</strong><small className="text-ink-muted">@{user.username}</small></span>
+          <Link to="/settings" className="icon-button" aria-label="Настройки" title="Настройки"><Settings size={18} /></Link>
           <button className="icon-button" onClick={() => logout.mutate()} aria-label="Выйти" title="Выйти">
             <LogOut size={18} />
           </button>
@@ -37,4 +38,3 @@ export function AppHeader() {
     </header>
   )
 }
-
