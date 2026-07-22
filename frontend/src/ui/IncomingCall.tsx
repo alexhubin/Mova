@@ -13,12 +13,12 @@ export function IncomingCall() {
   const calls = useQuery({
     queryKey: ['calls'],
     queryFn: () => api<DirectCall[]>('/api/calls'),
-    enabled: Boolean(user),
+    enabled: Boolean(user && !user.must_change_password),
     refetchInterval: user ? 30_000 : false,
   })
 
   useEffect(() => {
-    if (!user) return
+    if (!user || user.must_change_password) return
     const events = new EventSource('/api/calls/events')
     const refreshCalls = () => void queryClient.invalidateQueries({ queryKey: ['calls'] })
     events.addEventListener('calls', refreshCalls)
@@ -29,7 +29,7 @@ export function IncomingCall() {
   }, [queryClient, user])
 
   useEffect(() => {
-    if (!user) return
+    if (!user || user.must_change_password) return
     const heartbeat = () => void api<void>('/api/presence', { method: 'POST' }).catch(() => undefined)
     heartbeat()
     const interval = window.setInterval(heartbeat, 10_000)

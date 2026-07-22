@@ -11,6 +11,7 @@ import { HomePage } from './views/HomePage'
 import { RoomPage } from './views/RoomPage'
 import { NotFoundPage } from './views/NotFoundPage'
 import { SettingsPage } from './views/SettingsPage'
+import { FirstPasswordPage } from './views/FirstPasswordPage'
 import { IncomingCall } from './ui/IncomingCall'
 
 type RouterContext = { queryClient: QueryClient }
@@ -35,13 +36,13 @@ const indexRoute = createRoute({
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/login',
-  component: () => <AuthPage mode="login" />,
+  component: AuthPage,
 })
 
-const registerRoute = createRoute({
+const firstPasswordRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/register',
-  component: () => <AuthPage mode="register" />,
+  path: '/first-password',
+  component: FirstPasswordPage,
 })
 
 const roomRoute = createRoute({
@@ -56,7 +57,7 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, loginRoute, registerRoute, roomRoute, settingsRoute])
+const routeTree = rootRoute.addChildren([indexRoute, loginRoute, firstPasswordRoute, roomRoute, settingsRoute])
 
 export const router = createRouter({ routeTree, context: { queryClient: undefined! } })
 

@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from '@tanstack/react-router'
+import { Link, Navigate, useNavigate, useParams } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Check,
   Copy,
-  LogOut,
   Mic,
   MicOff,
   MonitorUp,
+  PhoneOff,
   Radio,
   Settings,
   SlidersHorizontal,
-  Users,
   X,
 } from 'lucide-react'
 import {
@@ -45,17 +44,17 @@ export function RoomPage() {
   const roomQuery = useQuery({
     queryKey: ['room', inviteCode],
     queryFn: () => api<RoomInfo>(`/api/rooms/${inviteCode}`),
-    enabled: Boolean(user),
+    enabled: Boolean(user && !user.must_change_password),
   })
   const settingsQuery = useQuery({
     queryKey: ['account-settings'],
     queryFn: () => api<AccountSettings>('/api/account/settings'),
-    enabled: Boolean(user),
+    enabled: Boolean(user && !user.must_change_password),
   })
   const callsQuery = useQuery({
     queryKey: ['calls'],
     queryFn: () => api<DirectCall[]>('/api/calls'),
-    enabled: Boolean(user),
+    enabled: Boolean(user && !user.must_change_password),
     refetchInterval: 2_000,
   })
 
@@ -241,14 +240,12 @@ export function RoomPage() {
           <div className="eyebrow">Вас пригласили</div>
           <h1 className="font-display mt-5 text-5xl font-semibold tracking-[-0.05em]">Сначала представьтесь</h1>
           <p className="mt-4 text-lg text-ink-muted">Участники комнаты должны видеть, кто присоединился к разговору.</p>
-          <div className="mt-8 flex justify-center gap-3">
-            <a href={`/login?next=${next}`} className="button-primary">Войти</a>
-            <a href={`/register?next=${next}`} className="button-secondary">Создать аккаунт</a>
-          </div>
+          <div className="mt-8 flex justify-center"><a href={`/login?next=${next}`} className="button-primary">Войти</a></div>
         </section>
       </main>
     )
   }
+  if (user.must_change_password) return <Navigate to="/first-password" />
   if (roomQuery.isLoading) return <main className="page-shell py-20"><div className="skeleton h-[65dvh]" /></main>
   if (roomQuery.error || !roomQuery.data) {
     return (
@@ -266,15 +263,12 @@ export function RoomPage() {
     <main className="room-page">
       <div ref={audioHost} className="hidden" aria-hidden="true" />
       <div className="room-topbar">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-ink-muted">
-            <span className={connected ? 'live-dot' : 'idle-dot'} /> {connected ? 'В эфире' : 'Комната готова'}
-          </div>
-          <h1 className="font-display mt-1 truncate text-2xl font-semibold tracking-[-0.035em] sm:text-3xl">{roomQuery.data.name}</h1>
-        </div>
-        <button className="button-secondary compact shrink-0" onClick={copyInvite}>
-          {copied ? <Check size={17} /> : <Copy size={17} />} <span className="hidden sm:inline">{copied ? 'Скопировано' : 'Пригласить'}</span>
-        </button>
+        <Link to="/" className="brand room-brand"><span className="brand-dot" /><span>mowa</span></Link>
+        <h1>{roomQuery.data.name}</h1>
+        <code>{inviteCode}</code>
+        <button className="button-secondary compact" onClick={copyInvite}>{copied ? <Check size={15} /> : <Copy size={15} />} {copied ? 'Скопировано' : 'Копировать ссылку'}</button>
+        <span className="room-topbar-spacer" />
+        <span className={connected ? 'broadcast-status online' : 'broadcast-status'}><i />{connected ? 'в эфире' : 'комната готова'}</span>
       </div>
 
       {!connected ? (
@@ -299,19 +293,14 @@ export function RoomPage() {
               <ScreenTrack publication={screenPublication} />
             ) : (
               <div className="empty-stage">
-                <div className="empty-wave" aria-hidden="true">{Array.from({ length: 11 }).map((_, index) => <i key={index} />)}</div>
-                <h2 className="font-display mt-8 text-3xl font-semibold">Сейчас только голос</h2>
-                <p className="mt-2 text-ink-muted">Любой участник может показать свой экран.</p>
+                <h2>Никто не демонстрирует экран</h2>
+                <p>Нажмите кнопку с монитором внизу, чтобы показать свой</p>
               </div>
             )}
           </section>
 
           <aside className="participants-panel">
-            <div className="flex items-center justify-between">
-              <h2 className="font-display text-xl font-semibold">Участники</h2>
-              <span className="participant-count"><Users size={14} /> {participants.length}</span>
-            </div>
-            <div className="mt-5 space-y-2">
+            <div className="participants-list">
               {participants.map((participant) => <ParticipantRow key={participant.identity} participant={participant} local={participant.identity === call.localParticipant.identity} />)}
             </div>
           </aside>
@@ -330,7 +319,7 @@ export function RoomPage() {
             <Settings size={21} />
           </button>
           <button className="call-control danger" onClick={leave} aria-label="Выйти из комнаты" title="Выйти">
-            <LogOut size={21} />
+            <PhoneOff size={21} />
           </button>
         </div>
       )}

@@ -3,6 +3,7 @@ export type User = {
   username: string
   email: string
   display_name: string
+  must_change_password: boolean
 }
 
 export type RoomInfo = {
