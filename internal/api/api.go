@@ -95,6 +95,7 @@ func (s *Server) Handler() http.Handler {
 	r.Use(s.verifyOrigin)
 
 	r.Get("/api/health", s.health)
+	r.Post("/api/livekit/webhook", s.liveKitWebhook)
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Post("/login", s.login)
 		r.Post("/passkey/login/begin", s.beginPasskeyLogin)
@@ -120,6 +121,9 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/friend-requests/{requestID}/accept", s.acceptFriendRequest)
 		r.Delete("/api/friend-requests/{requestID}", s.declineFriendRequest)
 		r.Delete("/api/friends/{userID}", s.deleteFriend)
+		r.Get("/api/direct-messages/{userID}", s.listDirectMessages)
+		r.Post("/api/direct-messages/{userID}", s.createDirectMessage)
+		r.Get("/api/direct-messages/{userID}/events", s.streamDirectMessageEvents)
 		r.Get("/api/calls", s.listCalls)
 		r.Get("/api/calls/events", s.streamCallEvents)
 		r.Post("/api/calls", s.createDirectCall)
@@ -141,7 +145,10 @@ func (s *Server) Handler() http.Handler {
 func requestTimeout(next http.Handler) http.Handler {
 	standard := middleware.Timeout(15 * time.Second)(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/calls/events" || strings.HasSuffix(r.URL.Path, "/messages/events") {
+		path := r.URL.Path
+		roomMessages := strings.HasPrefix(path, "/api/rooms/") && strings.HasSuffix(path, "/messages/events")
+		directMessages := strings.HasPrefix(path, "/api/direct-messages/") && strings.HasSuffix(path, "/events")
+		if path == "/api/calls/events" || roomMessages || directMessages {
 			next.ServeHTTP(w, r)
 			return
 		}

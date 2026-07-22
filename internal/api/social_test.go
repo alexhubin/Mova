@@ -8,7 +8,7 @@ import (
 func TestPersistentAccountsFriendsAndDirectCall(t *testing.T) {
 	server, annaClient, db := newTestServer(t)
 	borisClient := newHTTPClient(t)
-	provisionTestUser(t, db, "anna@example.com", "anna", "very-secure-password", "Анна", false)
+	annaUser := provisionTestUser(t, db, "anna@example.com", "anna", "very-secure-password", "Анна", false)
 	boris := provisionTestUser(t, db, "boris@example.com", "boris", "another-secure-password", "Борис", false)
 
 	response := doJSON(t, annaClient, http.MethodPost, server.URL+"/api/auth/login", map[string]string{
@@ -74,6 +74,26 @@ func TestPersistentAccountsFriendsAndDirectCall(t *testing.T) {
 		t.Fatalf("Boris should be offline: %+v", annaFriends.Friends)
 	}
 
+	response = doJSON(t, annaClient, http.MethodPost, server.URL+"/api/direct-messages/"+boris.ID, map[string]string{"body": "  Напишу, пока тебя нет  "})
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("offline direct message status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	var directMessage roomMessageResponse
+	decodeResponse(t, response, &directMessage)
+	if directMessage.Body != "Напишу, пока тебя нет" || directMessage.Author.Username != "anna" {
+		t.Fatalf("unexpected direct message: %+v", directMessage)
+	}
+
+	response = doJSON(t, annaClient, http.MethodGet, server.URL+"/api/direct-messages/"+boris.ID, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("list sent direct messages status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	var directMessages []roomMessageResponse
+	decodeResponse(t, response, &directMessages)
+	if len(directMessages) != 1 || directMessages[0].ID != directMessage.ID {
+		t.Fatalf("unexpected sent direct messages: %+v", directMessages)
+	}
+
 	response = doJSON(t, annaClient, http.MethodPost, server.URL+"/api/calls", map[string]string{"user_id": boris.ID})
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("offline call status = %d, body = %s", response.StatusCode, responseBody(t, response))
@@ -85,6 +105,15 @@ func TestPersistentAccountsFriendsAndDirectCall(t *testing.T) {
 		t.Fatalf("login Boris status = %d, body = %s", response.StatusCode, responseBody(t, response))
 	}
 	response.Body.Close()
+
+	response = doJSON(t, borisClient, http.MethodGet, server.URL+"/api/direct-messages/"+annaUser.ID, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("list received direct messages status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	decodeResponse(t, response, &directMessages)
+	if len(directMessages) != 1 || directMessages[0].Body != "Напишу, пока тебя нет" {
+		t.Fatalf("unexpected received direct messages: %+v", directMessages)
+	}
 
 	response = doJSON(t, annaClient, http.MethodPost, server.URL+"/api/calls", map[string]string{"user_id": boris.ID})
 	if response.StatusCode != http.StatusCreated {
@@ -120,6 +149,22 @@ func TestPersistentAccountsFriendsAndDirectCall(t *testing.T) {
 		t.Fatalf("direct room token status = %d, body = %s", response.StatusCode, responseBody(t, response))
 	}
 	response.Body.Close()
+
+	response = doJSON(t, annaClient, http.MethodPost, server.URL+"/api/rooms/"+call.InviteCode+"/messages", map[string]string{"body": "Сообщение из личного звонка"})
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("direct call message status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	var callMessage roomMessageResponse
+	decodeResponse(t, response, &callMessage)
+
+	response = doJSON(t, borisClient, http.MethodGet, server.URL+"/api/direct-messages/"+annaUser.ID, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("shared direct call history status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	decodeResponse(t, response, &directMessages)
+	if len(directMessages) != 2 || directMessages[1].ID != callMessage.ID || directMessages[1].Body != "Сообщение из личного звонка" {
+		t.Fatalf("direct call did not share friend dialog: %+v", directMessages)
+	}
 
 	response = doJSON(t, annaClient, http.MethodPut, server.URL+"/api/account/settings", map[string]string{"video_quality": "low"})
 	if response.StatusCode != http.StatusOK {

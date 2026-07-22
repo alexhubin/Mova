@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
@@ -18,6 +20,8 @@ import (
 	"github.com/alexhubin/Mowa/internal/database"
 	"github.com/google/uuid"
 	livekitAuth "github.com/livekit/protocol/auth"
+	"github.com/livekit/protocol/livekit"
+	livekitJSON "github.com/livekit/protocol/utils/protojson"
 )
 
 func TestAuthRoomAndLiveKitTokenFlow(t *testing.T) {
@@ -216,6 +220,80 @@ func TestProtectedEndpointsAndOrigin(t *testing.T) {
 	response.Body.Close()
 }
 
+func TestLiveKitWebhookDeletesFinishedGroupRoom(t *testing.T) {
+	server, client, db := newTestServer(t)
+	provisionTestUser(t, db, "owner@example.com", "room_owner", "very-secure-password", "Владелец", false)
+
+	response := doJSON(t, client, http.MethodPost, server.URL+"/api/auth/login", map[string]string{
+		"email": "owner@example.com", "password": "very-secure-password",
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	response.Body.Close()
+
+	response = doJSON(t, client, http.MethodPost, server.URL+"/api/rooms", map[string]string{"name": "Временная комната"})
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("create room status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	var room roomResponse
+	decodeResponse(t, response, &room)
+
+	response = doJSON(t, client, http.MethodPost, server.URL+"/api/rooms/"+room.InviteCode+"/messages", map[string]string{"body": "Исчезнет вместе с комнатой"})
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("create room message status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	response.Body.Close()
+
+	response = doJSON(t, client, http.MethodPost, server.URL+"/api/livekit/webhook", map[string]string{"event": "room_finished"})
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unsigned webhook status = %d, want 401", response.StatusCode)
+	}
+	response.Body.Close()
+
+	response = doLiveKitWebhook(t, client, server.URL, &livekit.WebhookEvent{
+		Event: "room_started", Room: &livekit.Room{Name: room.ID, Sid: "RM_current"},
+	})
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("room started webhook status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	response.Body.Close()
+
+	response = doLiveKitWebhook(t, client, server.URL, &livekit.WebhookEvent{
+		Event: "room_finished", Room: &livekit.Room{Name: room.ID, Sid: "RM_stale"},
+	})
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("stale room finished webhook status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	response.Body.Close()
+	response = doJSON(t, client, http.MethodGet, server.URL+"/api/rooms/"+room.InviteCode, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("stale webhook deleted active room, status = %d", response.StatusCode)
+	}
+	response.Body.Close()
+
+	response = doLiveKitWebhook(t, client, server.URL, &livekit.WebhookEvent{
+		Event: "room_finished", Room: &livekit.Room{Name: room.ID, Sid: "RM_current"},
+	})
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("room finished webhook status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	response.Body.Close()
+	response = doJSON(t, client, http.MethodGet, server.URL+"/api/rooms/"+room.InviteCode, nil)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("finished room status = %d, want 404", response.StatusCode)
+	}
+	response.Body.Close()
+
+	var messageCount int
+	if err := db.QueryRowContext(context.Background(), "SELECT count(*) FROM room_messages WHERE room_id = $1", room.ID).Scan(&messageCount); err != nil {
+		t.Fatalf("count deleted room messages: %v", err)
+	}
+	if messageCount != 0 {
+		t.Fatalf("room messages after room deletion = %d, want 0", messageCount)
+	}
+}
+
 func TestPasskeyCeremonyAndManagementEndpoints(t *testing.T) {
 	server, client, db := newTestServer(t)
 	user := provisionTestUser(t, db, "passkey@example.com", "passkey_user", "very-secure-password", "Passkey User", true)
@@ -337,7 +415,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *sql.DB) {
 		t.Fatalf("open database: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if _, err := db.ExecContext(context.Background(), "TRUNCATE room_messages, direct_calls, friendships, friend_requests, room_members, rooms, sessions, user_settings, users CASCADE"); err != nil {
+	if _, err := db.ExecContext(context.Background(), "TRUNCATE direct_messages, room_messages, direct_calls, friendships, friend_requests, room_members, rooms, sessions, user_settings, users CASCADE"); err != nil {
 		t.Fatalf("reset test database: %v", err)
 	}
 
@@ -399,6 +477,33 @@ func doJSON(t *testing.T, client *http.Client, method, url string, body any) *ht
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func doLiveKitWebhook(t *testing.T, client *http.Client, serverURL string, event *livekit.WebhookEvent) *http.Response {
+	t.Helper()
+	payload, err := livekitJSON.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checksum := sha256.Sum256(payload)
+	token, err := livekitAuth.NewAccessToken("devkey", "secretsecretsecretsecretsecretsecret").
+		SetValidFor(5 * time.Minute).
+		SetSha256(base64.StdEncoding.EncodeToString(checksum[:])).
+		ToJWT()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/api/livekit/webhook", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", token)
+	request.Header.Set("Content-Type", "application/webhook+json")
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)

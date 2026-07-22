@@ -7,6 +7,7 @@ package dbgen
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -30,7 +31,7 @@ func (q *Queries) AddRoomMember(ctx context.Context, arg AddRoomMemberParams) er
 const createRoom = `-- name: CreateRoom :one
 INSERT INTO rooms (id, invite_code, name, owner_id, kind, created_at)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, invite_code, name, owner_id, kind, created_at
+RETURNING id, invite_code, name, owner_id, kind, created_at, livekit_room_sid
 `
 
 type CreateRoomParams struct {
@@ -59,12 +60,50 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 		&i.OwnerID,
 		&i.Kind,
 		&i.CreatedAt,
+		&i.LivekitRoomSid,
 	)
 	return i, err
 }
 
+const deleteRoomByFinishedSession = `-- name: DeleteRoomByFinishedSession :execrows
+DELETE FROM rooms
+WHERE id = $1 AND (livekit_room_sid IS NULL OR livekit_room_sid = $2)
+`
+
+type DeleteRoomByFinishedSessionParams struct {
+	ID             string         `json:"id"`
+	LivekitRoomSid sql.NullString `json:"livekit_room_sid"`
+}
+
+func (q *Queries) DeleteRoomByFinishedSession(ctx context.Context, arg DeleteRoomByFinishedSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteRoomByFinishedSession, arg.ID, arg.LivekitRoomSid)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const getDirectRoomPeerID = `-- name: GetDirectRoomPeerID :one
+SELECT CASE WHEN caller_id = $2 THEN callee_id ELSE caller_id END AS peer_id
+FROM direct_calls
+WHERE room_id = $1 AND (caller_id = $2 OR callee_id = $2)
+LIMIT 1
+`
+
+type GetDirectRoomPeerIDParams struct {
+	RoomID   string `json:"room_id"`
+	CallerID string `json:"caller_id"`
+}
+
+func (q *Queries) GetDirectRoomPeerID(ctx context.Context, arg GetDirectRoomPeerIDParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getDirectRoomPeerID, arg.RoomID, arg.CallerID)
+	var peer_id string
+	err := row.Scan(&peer_id)
+	return peer_id, err
+}
+
 const getRoomByInviteCode = `-- name: GetRoomByInviteCode :one
-SELECT id, invite_code, name, owner_id, kind, created_at FROM rooms WHERE invite_code = $1 LIMIT 1
+SELECT id, invite_code, name, owner_id, kind, created_at, livekit_room_sid FROM rooms WHERE invite_code = $1 LIMIT 1
 `
 
 func (q *Queries) GetRoomByInviteCode(ctx context.Context, inviteCode string) (Room, error) {
@@ -77,6 +116,7 @@ func (q *Queries) GetRoomByInviteCode(ctx context.Context, inviteCode string) (R
 		&i.OwnerID,
 		&i.Kind,
 		&i.CreatedAt,
+		&i.LivekitRoomSid,
 	)
 	return i, err
 }
@@ -97,4 +137,18 @@ func (q *Queries) IsRoomMember(ctx context.Context, arg IsRoomMemberParams) (boo
 	var is_member bool
 	err := row.Scan(&is_member)
 	return is_member, err
+}
+
+const markRoomStarted = `-- name: MarkRoomStarted :exec
+UPDATE rooms SET livekit_room_sid = $2 WHERE id = $1
+`
+
+type MarkRoomStartedParams struct {
+	ID             string         `json:"id"`
+	LivekitRoomSid sql.NullString `json:"livekit_room_sid"`
+}
+
+func (q *Queries) MarkRoomStarted(ctx context.Context, arg MarkRoomStartedParams) error {
+	_, err := q.db.ExecContext(ctx, markRoomStarted, arg.ID, arg.LivekitRoomSid)
+	return err
 }

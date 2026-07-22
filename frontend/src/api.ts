@@ -32,6 +32,8 @@ export type RoomMessage = {
   created_at: string
 }
 
+export type DirectMessage = RoomMessage
+
 export type FriendUser = {
   id: string
   username: string

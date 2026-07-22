@@ -21,6 +21,14 @@ type DirectCall struct {
 	EndedAt    sql.NullTime `json:"ended_at"`
 }
 
+type DirectMessage struct {
+	ID          string    `json:"id"`
+	SenderID    string    `json:"sender_id"`
+	RecipientID string    `json:"recipient_id"`
+	Body        string    `json:"body"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type FriendRequest struct {
 	ID         string    `json:"id"`
 	SenderID   string    `json:"sender_id"`
@@ -61,12 +69,13 @@ type PasskeyUser struct {
 }
 
 type Room struct {
-	ID         string    `json:"id"`
-	InviteCode string    `json:"invite_code"`
-	Name       string    `json:"name"`
-	OwnerID    string    `json:"owner_id"`
-	Kind       string    `json:"kind"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID             string         `json:"id"`
+	InviteCode     string         `json:"invite_code"`
+	Name           string         `json:"name"`
+	OwnerID        string         `json:"owner_id"`
+	Kind           string         `json:"kind"`
+	CreatedAt      time.Time      `json:"created_at"`
+	LivekitRoomSid sql.NullString `json:"livekit_room_sid"`
 }
 
 type RoomMember struct {

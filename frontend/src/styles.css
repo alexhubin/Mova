@@ -149,7 +149,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .friends-table footer { padding: 13px 20px; color: var(--faint); font-size: 12px; }
 .friend-row { display: flex; min-width: 0; align-items: center; gap: 14px; padding: 15px 20px; background: var(--panel); transition: background .15s; }
 .friend-row:hover { background: var(--field); }
-.friend-row.offline-row { opacity: .62; }
+.friend-row.offline-row .participant-avatar, .friend-row.offline-row .user-label { opacity: .62; }
 .participant-avatar { position: relative; display: grid; width: 44px; height: 44px; flex: none; place-items: center; border-radius: 50%; color: var(--accent); background: var(--tint); font-size: 15px; font-weight: 800; }
 .participant-avatar i { position: absolute; right: 0; bottom: 0; width: 11px; height: 11px; border: 2px solid var(--panel); border-radius: 50%; background: var(--faint); }
 .participant-avatar i.online { background: var(--green); }
@@ -157,8 +157,9 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .user-label strong, .user-label small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user-label strong { color: var(--bright); font-size: 15px; }
 .user-label small { margin-top: 2px; color: var(--muted); font-size: 12.5px; }
-.friend-call { display: inline-flex; min-height: 38px; align-items: center; gap: 7px; border: 1px solid var(--border2); border-radius: 999px; padding: 0 18px; color: var(--bright); background: transparent; font-size: 13px; font-weight: 600; cursor: pointer; }
-.friend-call:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-ink); background: var(--accent); }
+.friend-actions { display: flex; flex: none; gap: 8px; }
+.friend-call, .friend-message { display: inline-flex; min-height: 38px; align-items: center; gap: 7px; border: 1px solid var(--border2); border-radius: 999px; padding: 0 18px; color: var(--bright); background: transparent; font-size: 13px; font-weight: 600; cursor: pointer; }
+.friend-call:hover:not(:disabled), .friend-message:hover { border-color: var(--accent); color: var(--accent-ink); background: var(--accent); }
 .request-state { flex: none; color: var(--muted); font-size: 12px; }
 .empty-list { margin: 0; padding: 18px; color: var(--muted); font-size: 13px; text-align: center; }
 .outgoing-call { display: flex; width: 100%; align-items: center; gap: 10px; margin-top: 16px; border: 1px solid color-mix(in srgb, var(--green) 35%, var(--border)); border-radius: 16px; padding: 12px 16px; color: var(--text); background: color-mix(in srgb, var(--green) 8%, var(--panel)); cursor: pointer; }
@@ -171,6 +172,10 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .simple-modal p { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .simple-modal .text-input { font-family: ui-monospace, monospace; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.direct-chat-modal { display: flex; width: min(100%, 560px); height: min(680px, calc(100dvh - 40px)); overflow: hidden; flex-direction: column; border: 1px solid var(--border); border-radius: 26px; background: var(--panel); box-shadow: var(--shadow); animation: slide-up .2s ease; }
+.direct-chat-header { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); padding: 14px 16px; }
+.direct-chat-header > button { display: grid; width: 38px; height: 38px; flex: none; place-items: center; border: 1px solid var(--border2); border-radius: 50%; color: var(--muted); background: transparent; cursor: pointer; }
+.direct-chat-header > button:hover { color: var(--bright); background: var(--field); }
 
 .settings-page { padding-bottom: 70px; }
 .settings-stack { display: grid; max-width: 620px; gap: 18px; margin-top: 26px; }
@@ -301,8 +306,9 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .request-card { align-items: flex-start; flex-wrap: wrap; }
   .request-card .user-label { min-width: calc(100% - 64px); }
   .friend-row { padding: 13px 14px; }
-  .friend-call { width: 40px; min-height: 40px; justify-content: center; padding: 0; border-radius: 50%; }
-  .friend-call span { display: none; }
+  .friend-call, .friend-message { width: 40px; min-height: 40px; justify-content: center; padding: 0; border-radius: 50%; }
+  .friend-call span, .friend-message span { display: none; }
+  .direct-chat-modal { height: calc(100dvh - 24px); border-radius: 22px; }
   .settings-card { padding: 22px 18px; }
   .settings-card-heading { align-items: flex-start; flex-direction: column; }
   .passkey-create { align-items: stretch; flex-direction: column; }
