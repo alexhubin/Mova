@@ -1,71 +1,71 @@
 # Mowa
 
-Mowa — минималистичное веб-приложение для личных и групповых голосовых звонков с демонстрацией экрана. Аккаунты, друзья и звонки хранятся в PostgreSQL, а браузеры отправляют медиатрафик напрямую в отдельный self-hosted LiveKit SFU.
+Mowa is a minimalist web application for one-to-one and group voice calls with screen sharing. Accounts, friendships, calls, and messages are stored in PostgreSQL, while browsers send media traffic directly through a dedicated self-hosted LiveKit SFU.
 
-## Что входит в MVP
+## MVP features
 
-- постоянный аккаунт с уникальным username, профилем и сменой пароля;
-- вход и выход с 30-дневной защищённой сессией; публичной регистрации нет;
-- вход без пароля через passkey (Touch ID, Face ID, Windows Hello или аппаратный ключ);
-- обязательная смена временного пароля при первом входе;
-- поиск пользователей, заявки и список друзей;
-- постоянные личные диалоги с доставкой офлайн; тот же диалог доступен во время личного звонка;
-- прямой звонок другу и входящий вызов;
-- создание постоянной комнаты со ссылкой-приглашением;
-- групповой голосовой звонок;
-- отдельный групповой чат комнаты с мгновенными обновлениями; он удаляется вместе с опустевшей комнатой;
-- демонстрация экрана компьютера или телефона, если её поддерживает браузер;
-- список участников и индикация говорящего;
-- включение и отключение микрофона;
-- выбор микрофона и устройства вывода в поддерживаемых браузерах;
-- выбор качества screen share: 720p/30 при 2 Мбит/с или 1080p/30 при 5 Мбит/с;
-- VP9/SVC для screen share с автоматическим резервным VP8;
-- полноэкранный просмотр активной демонстрации;
-- подключение к комнате и выход из неё.
+- Persistent accounts with unique usernames, profiles, and password changes
+- Sign-in and sign-out with secure 30-day sessions; public registration is disabled
+- Passwordless sign-in with passkeys (Touch ID, Face ID, Windows Hello, or a hardware security key)
+- Mandatory temporary password change on first sign-in
+- User search, friend requests, and a friends list
+- Persistent direct conversations with offline delivery; the same conversation is available during a one-to-one call
+- Direct calls to friends and incoming call notifications
+- Persistent rooms with shareable invitation links
+- Group voice calls
+- A separate persistent chat for each group room, updated in real time and deleted when the empty room is removed
+- Screen sharing from desktop or mobile devices when supported by the browser
+- Participant list and active speaker indicators
+- Microphone mute and unmute controls
+- Microphone and audio output selection in supported browsers
+- Screen share quality presets: 720p/30 at 2 Mbps or 1080p/30 at 5 Mbps
+- VP9/SVC for screen sharing with automatic VP8 fallback
+- Full-screen viewing of the active screen share
+- Room join and leave flows
 
-Интерфейса камеры нет. LiveKit-токен не запрещает видеопубликацию архитектурно, поэтому камеру можно добавить позже без смены медиасервера.
+There is no camera UI. LiveKit tokens do not prohibit video publishing at the protocol level, so camera support can be added later without replacing the media server.
 
-## Архитектура
+## Architecture
 
 ```text
-Браузер ── HTTPS ──> Caddy ──> React / Go API ──> PostgreSQL 18
+Browser ── HTTPS ──> Caddy ──> React / Go API ──> PostgreSQL 18
    │                                 │
-   │       короткоживущий JWT <──────┘
+   │          short-lived JWT <──────┘
    │
    └──── WebRTC / WSS ───────> LiveKit SFU
 ```
 
-API никогда не проксирует аудио или демонстрацию экрана. Он проверяет cookie-сессию, управляет комнатами и сохраняет сообщения в PostgreSQL, доставляя уведомления о новых сообщениях через SSE. Для медиасессии API выпускает LiveKit JWT на 10 минут. Подписанный webhook LiveKit удаляет комнату через 30 секунд после выхода последнего участника; групповые сообщения удаляются каскадно, а личный диалог сохраняется отдельно.
+The API never proxies audio or screen-sharing traffic. It validates cookie sessions, manages rooms, stores messages in PostgreSQL, and delivers new-message notifications over SSE. For each media session, the API issues a LiveKit JWT that expires after 10 minutes. A signed LiveKit webhook deletes a room 30 seconds after the last participant leaves; group messages are removed through cascading deletion, while direct conversations are stored separately and remain available.
 
-## Стек
+## Tech stack
 
-- Go 1.26, `chi`, `database/sql`, чистый Go-драйвер `pgx`, `go-webauthn`;
-- PostgreSQL 18; backend по-прежнему собирается с `CGO_ENABLED=0`;
-- `sqlc` для типизированных запросов, `goose` для встроенных миграций;
-- React, TypeScript, Vite, TanStack Router, TanStack Query, Tailwind CSS;
-- LiveKit Server, Docker Compose, Caddy.
+- Go 1.26, `chi`, `database/sql`, the pure-Go `pgx` driver, and `go-webauthn`
+- PostgreSQL 18; the backend is built with `CGO_ENABLED=0`
+- `sqlc` for type-safe queries and `goose` for embedded migrations
+- React, TypeScript, Vite, TanStack Router, TanStack Query, and Tailwind CSS
+- LiveKit Server, Docker Compose, and Caddy
 
-## Локальный запуск
+## Local setup
 
-Нужны Docker Engine и Docker Compose v2.
+Docker Engine and Docker Compose v2 are required.
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-После запуска приложение доступно на [http://localhost](http://localhost), LiveKit — на `ws://localhost:7880`. PostgreSQL хранится в Docker volume `postgres_data`; goose-миграции применяются API при старте. Для PostgreSQL 18 volume намеренно монтируется в `/var/lib/postgresql`, как требует актуальный официальный образ.
+Once the stack is running, the application is available at [http://localhost](http://localhost) and LiveKit at `ws://localhost:7880`. PostgreSQL data is stored in the `postgres_data` Docker volume, and the API applies goose migrations on startup. With PostgreSQL 18, the volume is intentionally mounted at `/var/lib/postgresql`, as required by the current official image.
 
-Для проверки:
+Verify the deployment:
 
 ```bash
 curl http://localhost/api/health
 docker compose ps
 ```
 
-### Создание пользователя
+### Create a user
 
-Аккаунты создаёт администратор. Передайте временный пароль через переменную окружения, чтобы он не попадал в аргументы процесса:
+Accounts are created by an administrator. Pass the temporary password through an environment variable so it does not appear in process arguments:
 
 ```bash
 docker compose run --rm \
@@ -73,20 +73,20 @@ docker compose run --rm \
   --entrypoint mova-create-user api \
   -email user@example.com \
   -username user_name \
-  -name 'Имя пользователя'
+  -name 'User Name'
 ```
 
-При первом входе доступны только выход и обязательная установка нового пароля. Друзья, настройки, комнаты и LiveKit-токены блокируются API до завершения этого шага.
+Until the user replaces the temporary password, the only available actions are signing out and setting a new password. Friends, settings, rooms, and LiveKit tokens remain blocked by the API.
 
-Остановка без удаления данных:
+Stop the stack without deleting its data:
 
 ```bash
 docker compose down
 ```
 
-Не добавляйте `-v`, если хотите сохранить аккаунты и комнаты.
+Do not add `-v` if you want to preserve accounts, conversations, and rooms.
 
-## Разработка
+## Development
 
 Backend:
 
@@ -104,46 +104,46 @@ npm test
 npm run build
 ```
 
-`make test` поднимает изолированный PostgreSQL 18 через test-profile Compose и запускает интеграционные API-тесты. Vite проксирует `/api` на `localhost:8080`. Для запуска API вне Compose задайте доступный PostgreSQL DSN:
+`make test` starts an isolated PostgreSQL 18 instance through the Compose test profile and runs the API integration tests. Vite proxies `/api` to `localhost:8080`. To run the API outside Compose, provide an accessible PostgreSQL DSN:
 
 ```bash
 DATABASE_URL='postgres://mova:password@localhost:5432/mova?sslmode=disable' go run ./cmd/api
 ```
 
-После изменения SQL-схемы или запросов пересоздайте код:
+Regenerate the database code after changing the SQL schema or queries:
 
 ```bash
 make generate
 ```
 
-Команда использует зафиксированный Docker-образ `sqlc/sqlc:1.29.0`. Generated-файлы коммитятся в репозиторий.
+This command uses the pinned `sqlc/sqlc:1.29.0` Docker image. Generated files are committed to the repository.
 
-## Конфигурация
+## Configuration
 
-| Переменная | Назначение | Локальное значение |
+| Variable | Purpose | Local value |
 |---|---|---|
-| `APP_ADDRESS` | адрес сайта для Caddy | `http://localhost` |
-| `LIVEKIT_ADDRESS` | адрес WSS endpoint для Caddy | `http://livekit.localhost` |
-| `APP_ORIGIN` | допустимый браузерный Origin | `http://localhost` |
-| `COOKIE_SECURE` | cookie только через HTTPS | `false` |
-| `POSTGRES_PASSWORD` | пароль внутреннего пользователя PostgreSQL | dev-пароль |
-| `DATABASE_URL` | PostgreSQL DSN при запуске API вне Compose | localhost DSN |
-| `LIVEKIT_URL` | публичный URL SFU, возвращаемый API | `ws://localhost:7880` |
-| `LIVEKIT_API_KEY` | общий ключ API и SFU | `devkey` |
-| `LIVEKIT_API_SECRET` | общий секрет, минимум 32 символа | локальный dev-секрет |
-| `WEBAUTHN_RP_ID` | домен passkey без схемы и порта; по умолчанию берётся из `APP_ORIGIN` | `localhost` |
-| `WEBAUTHN_RP_NAME` | название сервиса в системном диалоге passkey | `Mowa` |
+| `APP_ADDRESS` | Site address used by Caddy | `http://localhost` |
+| `LIVEKIT_ADDRESS` | LiveKit endpoint address used by Caddy | `http://livekit.localhost` |
+| `APP_ORIGIN` | Allowed browser origin | `http://localhost` |
+| `COOKIE_SECURE` | Restrict cookies to HTTPS | `false` |
+| `POSTGRES_PASSWORD` | Password for the internal PostgreSQL user | Development password |
+| `DATABASE_URL` | PostgreSQL DSN when running the API outside Compose | Localhost DSN |
+| `LIVEKIT_URL` | Public SFU URL returned by the API | `ws://localhost:7880` |
+| `LIVEKIT_API_KEY` | Shared API and SFU key | `devkey` |
+| `LIVEKIT_API_SECRET` | Shared secret with at least 32 characters | Local development secret |
+| `WEBAUTHN_RP_ID` | Passkey domain without scheme or port; derived from `APP_ORIGIN` by default | `localhost` |
+| `WEBAUTHN_RP_NAME` | Service name shown in the system passkey dialog | `Mowa` |
 
-В production обязательно задайте собственные ключ и случайный секрет. `.env` игнорируется Git.
+Always use a unique key and a randomly generated secret in production. `.env` is ignored by Git.
 
-## Production-развёртывание
+## Production deployment
 
-Для полноценной работы микрофона и демонстрации экрана нужны HTTPS и домены, указывающие на сервер:
+Microphone access and screen sharing require HTTPS and domains that point to the server:
 
-- `mova.example.com` → IP сервера;
-- `livekit.example.com` → IP сервера.
+- `mova.example.com` → server IP address
+- `livekit.example.com` → server IP address
 
-Пример production `.env`:
+Example production `.env`:
 
 ```dotenv
 APP_ADDRESS=mova.example.com
@@ -157,25 +157,27 @@ LIVEKIT_API_SECRET=replace-with-at-least-32-random-characters
 WEBAUTHN_RP_NAME=Mowa
 ```
 
-`WEBAUTHN_RP_ID` можно не задавать: API безопасно возьмёт `mova.example.com` из `APP_ORIGIN`. После выпуска passkey менять RP ID нельзя — существующие ключи привязаны к домену.
+`WEBAUTHN_RP_ID` may be omitted: the API safely derives `mova.example.com` from `APP_ORIGIN`. Do not change the RP ID after creating passkeys, because existing credentials are bound to the domain.
 
-Откройте во внешнем firewall следующие порты:
+Open these ports in the external firewall:
 
-- `80/tcp`, `443/tcp`, `443/udp` — сайт, WSS и HTTP/3;
-- `7881/tcp` — WebRTC через TCP;
-- `7882/udp` — WebRTC UDP mux;
-- `3478/udp` — встроенный TURN/UDP.
-- `40000:40100/udp` — ограниченный диапазон relay-портов TURN.
+- `80/tcp`, `443/tcp`, and `443/udp` — website, WSS, and HTTP/3
+- `7881/tcp` — WebRTC over TCP
+- `7882/udp` — WebRTC UDP mux
+- `3478/udp` — built-in TURN over UDP
+- `40000:40100/udp` — restricted TURN relay port range
 
-LiveKit работает с `network_mode: host`, чтобы корректно публиковать WebRTC-кандидаты и не прогонять медиа через Docker NAT. Перед запуском на сервере убедитесь, что эти порты и `80/443` не заняты другими проектами. Если на сервере уже есть общий reverse proxy, не запускайте сервис `caddy` из этого Compose без override: подключите `api:8080`, `web:8080` и LiveKit `127.0.0.1:7880` к существующему proxy.
+LiveKit uses `network_mode: host` so it can advertise correct WebRTC candidates without routing media through Docker NAT. Before starting the stack, make sure these ports and ports `80`/`443` are not already occupied by another project. If the server already has a shared reverse proxy, do not start the `caddy` service from this Compose configuration without an override. Connect `api:8080`, `web:8080`, and LiveKit at `127.0.0.1:7880` to the existing proxy instead.
 
-Для текущего VPS добавлен `compose.vps.yaml`: он не запускает второй Caddy и подключает `api`/`web` к внешней сети `northstar_default`. Файл `deploy/Caddyfile.vps-snippet` содержит изолированные server block для общего proxy. Приложение доступно на `mova.hubindev.cc`, LiveKit — на `livekit.hubindev.cc`. DNS-запись LiveKit должна оставаться в режиме DNS only, чтобы WebRTC-трафик шёл напрямую на VPS.
+The repository includes `compose.vps.yaml` for deployments that use an existing shared reverse proxy. It disables the second Caddy instance and connects `api` and `web` to the external `northstar_default` network. `deploy/Caddyfile.vps-snippet` contains isolated server blocks for the shared proxy. Keep the LiveKit DNS record in DNS-only mode so WebRTC traffic reaches the server directly.
+
+Deploy with the VPS override:
 
 ```bash
 docker compose -f compose.yaml -f compose.vps.yaml up -d --build
 ```
 
-Запуск:
+For a standalone deployment:
 
 ```bash
 docker compose pull
@@ -184,34 +186,34 @@ docker compose ps
 curl -fsS https://mova.example.com/api/health
 ```
 
-## Безопасность и ограничения MVP
+## Security and MVP limitations
 
-- Пароли хешируются Argon2id с уникальной солью.
-- Passkey использует discoverable WebAuthn credential с обязательной проверкой пользователя. Приватный ключ остаётся на устройстве; API хранит публичную credential-запись и обновляемый счётчик подписи.
-- WebAuthn challenge живёт 5 минут, используется один раз и привязан к случайной `HttpOnly`, `SameSite=Strict`, `Secure`-cookie в production.
-- Публичного endpoint регистрации нет; временные аккаунты создаются только административной CLI-командой.
-- Сессии — случайные opaque-токены; в PostgreSQL хранится только SHA-256 хеш.
-- Cookie имеет `HttpOnly` и `SameSite=Lax`; в production включается `Secure`.
-- Изменяющие запросы проверяют `Origin`.
-- LiveKit JWT ограничен одной комнатой и сроком 10 минут; data channel отключён, потому что сохраняемый чат работает через Go API и PostgreSQL.
-- Сообщения ограничены 2000 символами; frontend выводит их как обычный текст без HTML.
-- PostgreSQL не публикует `5432` на хост и доступен только API во внутренней Docker-сети.
-- Личные комнаты закрыты членством: знать invite code недостаточно для получения LiveKit JWT.
-- Один LiveKit инстанс подходит для MVP, но не обеспечивает high availability.
-- Для максимальной доступности в корпоративных сетях позже стоит добавить TURN/TLS на отдельном домене и Redis для масштабирования LiveKit.
+- Passwords are hashed with Argon2id and a unique salt.
+- Passkeys use discoverable WebAuthn credentials with mandatory user verification. The private key remains on the device; the API stores the public credential record and its updatable signature counter.
+- WebAuthn challenges expire after 5 minutes, can be used only once, and are bound to a random `HttpOnly`, `SameSite=Strict`, `Secure` cookie in production.
+- There is no public registration endpoint; temporary accounts can only be created through the administrative CLI.
+- Sessions use random opaque tokens; only their SHA-256 hashes are stored in PostgreSQL.
+- Session cookies are `HttpOnly` and `SameSite=Lax`; `Secure` is enabled in production.
+- State-changing requests validate the `Origin` header.
+- LiveKit JWTs are restricted to one room and expire after 10 minutes. The data channel is disabled because persistent chat uses the Go API and PostgreSQL.
+- Messages are limited to 2,000 characters and rendered by the frontend as plain text without HTML.
+- PostgreSQL does not expose port `5432` on the host and is available only to the API on the internal Docker network.
+- Direct-call rooms enforce membership; knowing an invitation code is not enough to obtain a LiveKit JWT.
+- A single LiveKit instance is sufficient for the MVP but does not provide high availability.
+- For the best connectivity from restricted corporate networks, a future release should add TURN/TLS on a dedicated domain and Redis for LiveKit scaling.
 
-## Структура
+## Project structure
 
 ```text
-cmd/api/                         точка входа Go API
-cmd/create-user/                 административное создание временного аккаунта
-internal/api/                    HTTP-маршруты и тесты
-internal/auth/                   Argon2id и сессии
-internal/database/migrations/    PostgreSQL goose-миграции
-internal/database/queries/       SQL-запросы sqlc
-internal/database/dbgen/         сгенерированный Go-код
-internal/media/                  выпуск LiveKit JWT
-frontend/                        React-приложение
-deploy/Caddyfile                 edge routing и TLS
-compose.yaml                     полный локальный/production стек
+cmd/api/                         Go API entry point
+cmd/create-user/                 Administrative temporary account creation
+internal/api/                    HTTP routes and tests
+internal/auth/                   Argon2id and sessions
+internal/database/migrations/    PostgreSQL goose migrations
+internal/database/queries/       sqlc SQL queries
+internal/database/dbgen/         Generated Go code
+internal/media/                  LiveKit JWT issuance
+frontend/                        React application
+deploy/Caddyfile                 Edge routing and TLS
+compose.yaml                     Full local/production stack
 ```
