@@ -17,7 +17,7 @@ SELECT EXISTS (
 SELECT * FROM rooms WHERE invite_code = $1 LIMIT 1;
 
 -- name: GetDirectRoomPeerID :one
-SELECT CASE WHEN caller_id = $2 THEN callee_id ELSE caller_id END AS peer_id
+SELECT (CASE WHEN caller_id = $2 THEN callee_id ELSE caller_id END)::text AS peer_id
 FROM direct_calls
 WHERE room_id = $1 AND (caller_id = $2 OR callee_id = $2)
 LIMIT 1;
