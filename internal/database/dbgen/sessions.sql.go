@@ -112,7 +112,7 @@ const touchSession = `-- name: TouchSession :exec
 UPDATE sessions
 SET last_seen_at = $2
 WHERE token_hash = $1
-  AND last_seen_at < $2 - INTERVAL '10 seconds'
+  AND last_seen_at < $2::timestamptz - INTERVAL '10 seconds'
 `
 
 type TouchSessionParams struct {

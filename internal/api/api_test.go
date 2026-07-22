@@ -72,11 +72,21 @@ func TestAuthRoomAndLiveKitTokenFlow(t *testing.T) {
 		t.Fatalf("unexpected me response: %+v", me)
 	}
 
+	if _, err := db.ExecContext(context.Background(), `UPDATE sessions SET last_seen_at = now() - INTERVAL '1 minute' WHERE user_id = $1`, me.ID); err != nil {
+		t.Fatalf("age session presence: %v", err)
+	}
 	response = doJSON(t, client, http.MethodPost, server.URL+"/api/presence", nil)
 	if response.StatusCode != http.StatusNoContent {
 		t.Fatalf("presence status = %d, body = %s", response.StatusCode, responseBody(t, response))
 	}
 	response.Body.Close()
+	var lastSeen time.Time
+	if err := db.QueryRowContext(context.Background(), `SELECT last_seen_at FROM sessions WHERE user_id = $1`, me.ID).Scan(&lastSeen); err != nil {
+		t.Fatalf("read session presence: %v", err)
+	}
+	if lastSeen.Before(time.Now().Add(-5 * time.Second)) {
+		t.Fatalf("session presence was not refreshed: %s", lastSeen)
+	}
 
 	response = doJSON(t, client, http.MethodPost, server.URL+"/api/rooms", map[string]string{"name": "Команда Mova"})
 	if response.StatusCode != http.StatusCreated {
