@@ -43,8 +43,8 @@ type Server struct {
 	now           func() time.Time
 	newID         func() string
 	newInvite     func() (string, error)
-	callEvents    *callEventBroker
-	messageEvents *messageEventBroker
+	callEvents    *eventBroker
+	messageEvents *eventBroker
 	webAuthn      *webauthn.WebAuthn
 }
 
@@ -69,8 +69,8 @@ func New(db *sql.DB, cfg config.Config) (*Server, error) {
 		db:            db,
 		queries:       dbgen.New(db),
 		cfg:           cfg,
-		callEvents:    newCallEventBroker(),
-		messageEvents: newMessageEventBroker(),
+		callEvents:    newEventBroker(),
+		messageEvents: newEventBroker(),
 		webAuthn:      webAuthn,
 		issuer:        media.TokenIssuer{APIKey: cfg.LiveKitAPIKey, APISecret: cfg.LiveKitAPISecret, TTL: cfg.LiveKitTokenTTL},
 		now:           time.Now,

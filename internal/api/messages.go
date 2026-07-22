@@ -3,11 +3,9 @@ package api
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/alexhubin/Mowa/internal/database/dbgen"
@@ -92,44 +90,6 @@ func (s *Server) createRoomMessage(w http.ResponseWriter, r *http.Request) {
 		ID: message.ID, Body: message.Body, CreatedAt: message.CreatedAt,
 		Author: messageAuthorResponse{ID: user.ID, Username: user.Username, DisplayName: user.DisplayName},
 	})
-}
-
-type messageEventBroker struct {
-	mu          sync.Mutex
-	subscribers map[string]map[chan struct{}]struct{}
-}
-
-func newMessageEventBroker() *messageEventBroker {
-	return &messageEventBroker{subscribers: make(map[string]map[chan struct{}]struct{})}
-}
-
-func (b *messageEventBroker) subscribe(roomID string) (<-chan struct{}, func()) {
-	updates := make(chan struct{}, 1)
-	b.mu.Lock()
-	if b.subscribers[roomID] == nil {
-		b.subscribers[roomID] = make(map[chan struct{}]struct{})
-	}
-	b.subscribers[roomID][updates] = struct{}{}
-	b.mu.Unlock()
-	return updates, func() {
-		b.mu.Lock()
-		delete(b.subscribers[roomID], updates)
-		if len(b.subscribers[roomID]) == 0 {
-			delete(b.subscribers, roomID)
-		}
-		b.mu.Unlock()
-	}
-}
-
-func (b *messageEventBroker) notify(roomID string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for updates := range b.subscribers[roomID] {
-		select {
-		case updates <- struct{}{}:
-		default:
-		}
-	}
 }
 
 func (s *Server) streamRoomMessageEvents(w http.ResponseWriter, r *http.Request) {
@@ -259,47 +219,5 @@ func (s *Server) requireFriend(w http.ResponseWriter, r *http.Request, userID, f
 }
 
 func (s *Server) streamMessageEvents(w http.ResponseWriter, r *http.Request, scope string) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "Поток сообщений недоступен")
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache, no-transform")
-	w.Header().Set("X-Accel-Buffering", "no")
-
-	updates, unsubscribe := s.messageEvents.subscribe(scope)
-	defer unsubscribe()
-	keepAlive := time.NewTicker(25 * time.Second)
-	defer keepAlive.Stop()
-	controller := http.NewResponseController(w)
-	writeDeadline := func() { _ = controller.SetWriteDeadline(time.Now().Add(35 * time.Second)) }
-	writeEvent := func() bool {
-		writeDeadline()
-		if _, err := fmt.Fprint(w, "event: messages\ndata: {}\n\n"); err != nil {
-			return false
-		}
-		flusher.Flush()
-		return true
-	}
-	if !writeEvent() {
-		return
-	}
-
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-updates:
-			if !writeEvent() {
-				return
-			}
-		case <-keepAlive.C:
-			writeDeadline()
-			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
-				return
-			}
-			flusher.Flush()
-		}
-	}
+	streamEvents(w, r, s.messageEvents, scope, "messages")
 }
