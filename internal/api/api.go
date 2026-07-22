@@ -27,10 +27,11 @@ import (
 )
 
 const (
-	sessionCookie = "mova_session"
-	sessionTTL    = 30 * 24 * time.Hour
-	presenceTTL   = 30 * time.Second
-	maxBodyBytes  = 64 << 10
+	sessionCookie  = "mova_session"
+	sessionTTL     = 30 * 24 * time.Hour
+	presenceTTL    = 30 * time.Second
+	maxBodyBytes   = 64 << 10
+	requestTimeout = 15 * time.Second
 )
 
 var usernamePattern = regexp.MustCompile(`^[a-z0-9_]{3,32}$`)
@@ -90,70 +91,64 @@ func (s *Server) Handler() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(requestTimeout)
 	r.Use(s.securityHeaders)
 	r.Use(s.verifyOrigin)
 
-	r.Get("/api/health", s.health)
-	r.Post("/api/livekit/webhook", s.liveKitWebhook)
-	r.Route("/api/auth", func(r chi.Router) {
-		r.Post("/login", s.login)
-		r.Post("/passkey/login/begin", s.beginPasskeyLogin)
-		r.Post("/passkey/login/finish", s.finishPasskeyLogin)
-		r.With(s.requireUser).Post("/logout", s.logout)
-		r.With(s.requireUser).Get("/me", s.me)
-		r.With(s.requireUser).Put("/first-password", s.completeFirstPassword)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Timeout(requestTimeout))
+
+		r.Get("/api/health", s.health)
+		r.Post("/api/livekit/webhook", s.liveKitWebhook)
+		r.Route("/api/auth", func(r chi.Router) {
+			r.Post("/login", s.login)
+			r.Post("/passkey/login/begin", s.beginPasskeyLogin)
+			r.Post("/passkey/login/finish", s.finishPasskeyLogin)
+			r.With(s.requireUser).Post("/logout", s.logout)
+			r.With(s.requireUser).Get("/me", s.me)
+			r.With(s.requireUser).Put("/first-password", s.completeFirstPassword)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireUser)
+			r.Use(s.requirePasswordChanged)
+			r.Patch("/api/account/profile", s.updateProfile)
+			r.Put("/api/account/password", s.updatePassword)
+			r.Get("/api/account/passkeys", s.listPasskeys)
+			r.Post("/api/account/passkeys/register/begin", s.beginPasskeyRegistration)
+			r.Post("/api/account/passkeys/register/finish", s.finishPasskeyRegistration)
+			r.Delete("/api/account/passkeys/{passkeyID}", s.deletePasskey)
+			r.Get("/api/account/settings", s.getSettings)
+			r.Put("/api/account/settings", s.updateSettings)
+			r.Get("/api/users/search", s.searchUsers)
+			r.Get("/api/friends", s.listFriends)
+			r.Post("/api/friend-requests", s.createFriendRequest)
+			r.Post("/api/friend-requests/{requestID}/accept", s.acceptFriendRequest)
+			r.Delete("/api/friend-requests/{requestID}", s.declineFriendRequest)
+			r.Delete("/api/friends/{userID}", s.deleteFriend)
+			r.Get("/api/direct-messages/{userID}", s.listDirectMessages)
+			r.Post("/api/direct-messages/{userID}", s.createDirectMessage)
+			r.Get("/api/calls", s.listCalls)
+			r.Post("/api/calls", s.createDirectCall)
+			r.Post("/api/calls/{callID}/accept", s.acceptDirectCall)
+			r.Post("/api/calls/{callID}/decline", s.declineDirectCall)
+			r.Post("/api/calls/{callID}/end", s.endDirectCall)
+			r.Post("/api/rooms", s.createRoom)
+			r.Get("/api/rooms/{inviteCode}", s.getRoom)
+			r.Post("/api/rooms/{inviteCode}/token", s.roomToken)
+			r.Get("/api/rooms/{inviteCode}/messages", s.listRoomMessages)
+			r.Post("/api/rooms/{inviteCode}/messages", s.createRoomMessage)
+			r.Post("/api/presence", s.presence)
+		})
 	})
+
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireUser)
 		r.Use(s.requirePasswordChanged)
-		r.Patch("/api/account/profile", s.updateProfile)
-		r.Put("/api/account/password", s.updatePassword)
-		r.Get("/api/account/passkeys", s.listPasskeys)
-		r.Post("/api/account/passkeys/register/begin", s.beginPasskeyRegistration)
-		r.Post("/api/account/passkeys/register/finish", s.finishPasskeyRegistration)
-		r.Delete("/api/account/passkeys/{passkeyID}", s.deletePasskey)
-		r.Get("/api/account/settings", s.getSettings)
-		r.Put("/api/account/settings", s.updateSettings)
-		r.Get("/api/users/search", s.searchUsers)
-		r.Get("/api/friends", s.listFriends)
-		r.Post("/api/friend-requests", s.createFriendRequest)
-		r.Post("/api/friend-requests/{requestID}/accept", s.acceptFriendRequest)
-		r.Delete("/api/friend-requests/{requestID}", s.declineFriendRequest)
-		r.Delete("/api/friends/{userID}", s.deleteFriend)
-		r.Get("/api/direct-messages/{userID}", s.listDirectMessages)
-		r.Post("/api/direct-messages/{userID}", s.createDirectMessage)
-		r.Get("/api/direct-messages/{userID}/events", s.streamDirectMessageEvents)
-		r.Get("/api/calls", s.listCalls)
 		r.Get("/api/calls/events", s.streamCallEvents)
-		r.Post("/api/calls", s.createDirectCall)
-		r.Post("/api/calls/{callID}/accept", s.acceptDirectCall)
-		r.Post("/api/calls/{callID}/decline", s.declineDirectCall)
-		r.Post("/api/calls/{callID}/end", s.endDirectCall)
-		r.Post("/api/rooms", s.createRoom)
-		r.Get("/api/rooms/{inviteCode}", s.getRoom)
-		r.Post("/api/rooms/{inviteCode}/token", s.roomToken)
-		r.Get("/api/rooms/{inviteCode}/messages", s.listRoomMessages)
-		r.Post("/api/rooms/{inviteCode}/messages", s.createRoomMessage)
+		r.Get("/api/direct-messages/{userID}/events", s.streamDirectMessageEvents)
 		r.Get("/api/rooms/{inviteCode}/messages/events", s.streamRoomMessageEvents)
-		r.Post("/api/presence", s.presence)
 	})
 
 	return r
-}
-
-func requestTimeout(next http.Handler) http.Handler {
-	standard := middleware.Timeout(15 * time.Second)(next)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		roomMessages := strings.HasPrefix(path, "/api/rooms/") && strings.HasSuffix(path, "/messages/events")
-		directMessages := strings.HasPrefix(path, "/api/direct-messages/") && strings.HasSuffix(path, "/events")
-		if path == "/api/calls/events" || roomMessages || directMessages {
-			next.ServeHTTP(w, r)
-			return
-		}
-		standard.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) presence(w http.ResponseWriter, _ *http.Request) {
