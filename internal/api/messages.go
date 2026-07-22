@@ -50,12 +50,12 @@ func (s *Server) listRoomMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Не удалось загрузить сообщения")
 		return
 	}
-	result := make([]roomMessageResponse, len(rows))
-	for index, row := range rows {
-		result[len(rows)-1-index] = roomMessageResponse{
+	result := make([]roomMessageResponse, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, roomMessageResponse{
 			ID: row.ID, Body: row.Body, CreatedAt: row.CreatedAt,
 			Author: messageAuthorResponse{ID: row.UserID, Username: row.Username, DisplayName: row.DisplayName},
-		}
+		})
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -125,12 +125,12 @@ func (s *Server) writeDirectMessages(w http.ResponseWriter, r *http.Request, use
 		writeError(w, http.StatusInternalServerError, "Не удалось загрузить сообщения")
 		return
 	}
-	result := make([]roomMessageResponse, len(rows))
-	for index, row := range rows {
-		result[len(rows)-1-index] = roomMessageResponse{
+	result := make([]roomMessageResponse, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, roomMessageResponse{
 			ID: row.ID, Body: row.Body, CreatedAt: row.CreatedAt,
 			Author: messageAuthorResponse{ID: row.SenderID, Username: row.Username, DisplayName: row.DisplayName},
-		}
+		})
 	}
 	writeJSON(w, http.StatusOK, result)
 }

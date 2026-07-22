@@ -25,27 +25,42 @@ type CreateDirectMessageParams struct {
 }
 
 func (q *Queries) CreateDirectMessage(ctx context.Context, arg CreateDirectMessageParams) (DirectMessage, error) {
-	row := q.db.QueryRowContext(ctx, createDirectMessage, arg.ID, arg.SenderID, arg.RecipientID, arg.Body, arg.CreatedAt)
+	row := q.db.QueryRowContext(ctx, createDirectMessage,
+		arg.ID,
+		arg.SenderID,
+		arg.RecipientID,
+		arg.Body,
+		arg.CreatedAt,
+	)
 	var i DirectMessage
-	err := row.Scan(&i.ID, &i.SenderID, &i.RecipientID, &i.Body, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.SenderID,
+		&i.RecipientID,
+		&i.Body,
+		&i.CreatedAt,
+	)
 	return i, err
 }
 
 const listDirectMessages = `-- name: ListDirectMessages :many
-SELECT
-    m.id,
-    m.sender_id,
-    m.recipient_id,
-    m.body,
-    m.created_at,
-    u.username,
-    u.display_name
-FROM direct_messages m
-JOIN users u ON u.id = m.sender_id
-WHERE (m.sender_id = $1 AND m.recipient_id = $2)
-   OR (m.sender_id = $2 AND m.recipient_id = $1)
-ORDER BY m.created_at DESC, m.id DESC
-LIMIT 100
+SELECT id, sender_id, recipient_id, body, created_at, username, display_name FROM (
+    SELECT
+        m.id,
+        m.sender_id,
+        m.recipient_id,
+        m.body,
+        m.created_at,
+        u.username,
+        u.display_name
+    FROM direct_messages m
+    JOIN users u ON u.id = m.sender_id
+    WHERE (m.sender_id = $1 AND m.recipient_id = $2)
+       OR (m.sender_id = $2 AND m.recipient_id = $1)
+    ORDER BY m.created_at DESC, m.id DESC
+    LIMIT 100
+) recent
+ORDER BY recent.created_at, recent.id
 `
 
 type ListDirectMessagesParams struct {
@@ -72,7 +87,15 @@ func (q *Queries) ListDirectMessages(ctx context.Context, arg ListDirectMessages
 	items := []ListDirectMessagesRow{}
 	for rows.Next() {
 		var i ListDirectMessagesRow
-		if err := rows.Scan(&i.ID, &i.SenderID, &i.RecipientID, &i.Body, &i.CreatedAt, &i.Username, &i.DisplayName); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.SenderID,
+			&i.RecipientID,
+			&i.Body,
+			&i.CreatedAt,
+			&i.Username,
+			&i.DisplayName,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
