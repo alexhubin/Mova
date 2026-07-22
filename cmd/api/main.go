@@ -38,6 +38,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	apiServer.StartBackgroundJobs(ctx)
+
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           apiServer.Handler(),

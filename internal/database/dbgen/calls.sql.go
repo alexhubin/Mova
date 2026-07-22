@@ -77,10 +77,15 @@ func (q *Queries) CreateDirectCall(ctx context.Context, arg CreateDirectCallPara
 }
 
 const declineDirectCall = `-- name: DeclineDirectCall :one
-UPDATE direct_calls
-SET status = 'declined', ended_at = $3
-WHERE id = $1 AND callee_id = $2 AND status = 'ringing'
-RETURNING id, room_id, caller_id, callee_id, status, created_at, answered_at, ended_at
+WITH declined AS (
+    UPDATE direct_calls
+    SET status = 'declined', ended_at = $3
+    WHERE id = $1 AND callee_id = $2 AND status = 'ringing'
+    RETURNING id, room_id, caller_id, callee_id, status, created_at, answered_at, ended_at
+), cleared AS (
+    DELETE FROM open_call_participants WHERE call_id IN (SELECT id FROM declined)
+)
+SELECT id, room_id, caller_id, callee_id, status, created_at, answered_at, ended_at FROM declined
 `
 
 type DeclineDirectCallParams struct {
@@ -89,9 +94,20 @@ type DeclineDirectCallParams struct {
 	EndedAt  sql.NullTime `json:"ended_at"`
 }
 
-func (q *Queries) DeclineDirectCall(ctx context.Context, arg DeclineDirectCallParams) (DirectCall, error) {
+type DeclineDirectCallRow struct {
+	ID         string       `json:"id"`
+	RoomID     string       `json:"room_id"`
+	CallerID   string       `json:"caller_id"`
+	CalleeID   string       `json:"callee_id"`
+	Status     string       `json:"status"`
+	CreatedAt  time.Time    `json:"created_at"`
+	AnsweredAt sql.NullTime `json:"answered_at"`
+	EndedAt    sql.NullTime `json:"ended_at"`
+}
+
+func (q *Queries) DeclineDirectCall(ctx context.Context, arg DeclineDirectCallParams) (DeclineDirectCallRow, error) {
 	row := q.db.QueryRowContext(ctx, declineDirectCall, arg.ID, arg.CalleeID, arg.EndedAt)
-	var i DirectCall
+	var i DeclineDirectCallRow
 	err := row.Scan(
 		&i.ID,
 		&i.RoomID,
@@ -106,10 +122,15 @@ func (q *Queries) DeclineDirectCall(ctx context.Context, arg DeclineDirectCallPa
 }
 
 const endDirectCall = `-- name: EndDirectCall :one
-UPDATE direct_calls
-SET status = 'ended', ended_at = $3
-WHERE id = $1 AND (caller_id = $2 OR callee_id = $2) AND status IN ('ringing', 'active')
-RETURNING id, room_id, caller_id, callee_id, status, created_at, answered_at, ended_at
+WITH ended AS (
+    UPDATE direct_calls
+    SET status = 'ended', ended_at = $3
+    WHERE id = $1 AND (caller_id = $2 OR callee_id = $2) AND status IN ('ringing', 'active')
+    RETURNING id, room_id, caller_id, callee_id, status, created_at, answered_at, ended_at
+), cleared AS (
+    DELETE FROM open_call_participants WHERE call_id IN (SELECT id FROM ended)
+)
+SELECT id, room_id, caller_id, callee_id, status, created_at, answered_at, ended_at FROM ended
 `
 
 type EndDirectCallParams struct {
@@ -118,9 +139,20 @@ type EndDirectCallParams struct {
 	EndedAt  sql.NullTime `json:"ended_at"`
 }
 
-func (q *Queries) EndDirectCall(ctx context.Context, arg EndDirectCallParams) (DirectCall, error) {
+type EndDirectCallRow struct {
+	ID         string       `json:"id"`
+	RoomID     string       `json:"room_id"`
+	CallerID   string       `json:"caller_id"`
+	CalleeID   string       `json:"callee_id"`
+	Status     string       `json:"status"`
+	CreatedAt  time.Time    `json:"created_at"`
+	AnsweredAt sql.NullTime `json:"answered_at"`
+	EndedAt    sql.NullTime `json:"ended_at"`
+}
+
+func (q *Queries) EndDirectCall(ctx context.Context, arg EndDirectCallParams) (EndDirectCallRow, error) {
 	row := q.db.QueryRowContext(ctx, endDirectCall, arg.ID, arg.CallerID, arg.EndedAt)
-	var i DirectCall
+	var i EndDirectCallRow
 	err := row.Scan(
 		&i.ID,
 		&i.RoomID,
@@ -134,11 +166,17 @@ func (q *Queries) EndDirectCall(ctx context.Context, arg EndDirectCallParams) (D
 	return i, err
 }
 
-const expireStaleCalls = `-- name: ExpireStaleCalls :exec
-UPDATE direct_calls
-SET status = 'ended', ended_at = $1
-WHERE (status = 'ringing' AND created_at < $2)
-   OR (status = 'active' AND created_at < $3)
+const expireStaleCalls = `-- name: ExpireStaleCalls :many
+WITH expired AS (
+    UPDATE direct_calls
+    SET status = 'ended', ended_at = $1
+    WHERE (direct_calls.status = 'ringing' AND direct_calls.created_at < $2)
+       OR (direct_calls.status = 'active' AND direct_calls.created_at < $3)
+    RETURNING direct_calls.id, direct_calls.caller_id, direct_calls.callee_id
+), cleared AS (
+    DELETE FROM open_call_participants WHERE call_id IN (SELECT id FROM expired)
+)
+SELECT caller_id, callee_id FROM expired
 `
 
 type ExpireStaleCallsParams struct {
@@ -147,9 +185,32 @@ type ExpireStaleCallsParams struct {
 	CreatedAt_2 time.Time    `json:"created_at_2"`
 }
 
-func (q *Queries) ExpireStaleCalls(ctx context.Context, arg ExpireStaleCallsParams) error {
-	_, err := q.db.ExecContext(ctx, expireStaleCalls, arg.EndedAt, arg.CreatedAt, arg.CreatedAt_2)
-	return err
+type ExpireStaleCallsRow struct {
+	CallerID string `json:"caller_id"`
+	CalleeID string `json:"callee_id"`
+}
+
+func (q *Queries) ExpireStaleCalls(ctx context.Context, arg ExpireStaleCallsParams) ([]ExpireStaleCallsRow, error) {
+	rows, err := q.db.QueryContext(ctx, expireStaleCalls, arg.EndedAt, arg.CreatedAt, arg.CreatedAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpireStaleCallsRow{}
+	for rows.Next() {
+		var i ExpireStaleCallsRow
+		if err := rows.Scan(&i.CallerID, &i.CalleeID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getCallForParticipant = `-- name: GetCallForParticipant :one
@@ -305,4 +366,20 @@ func (q *Queries) ListOpenCallsForUser(ctx context.Context, calleeID string) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const registerOpenCallParticipant = `-- name: RegisterOpenCallParticipant :exec
+INSERT INTO open_call_participants (user_id, call_id, created_at)
+VALUES ($1, $2, $3)
+`
+
+type RegisterOpenCallParticipantParams struct {
+	UserID    string    `json:"user_id"`
+	CallID    string    `json:"call_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (q *Queries) RegisterOpenCallParticipant(ctx context.Context, arg RegisterOpenCallParticipantParams) error {
+	_, err := q.db.ExecContext(ctx, registerOpenCallParticipant, arg.UserID, arg.CallID, arg.CreatedAt)
+	return err
 }

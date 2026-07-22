@@ -16,11 +16,21 @@ WHERE status IN ('ringing', 'active') AND (caller_id = $1 OR callee_id = $1)
 ORDER BY created_at DESC
 LIMIT 1;
 
--- name: ExpireStaleCalls :exec
-UPDATE direct_calls
-SET status = 'ended', ended_at = $1
-WHERE (status = 'ringing' AND created_at < $2)
-   OR (status = 'active' AND created_at < $3);
+-- name: RegisterOpenCallParticipant :exec
+INSERT INTO open_call_participants (user_id, call_id, created_at)
+VALUES ($1, $2, $3);
+
+-- name: ExpireStaleCalls :many
+WITH expired AS (
+    UPDATE direct_calls
+    SET status = 'ended', ended_at = $1
+    WHERE (direct_calls.status = 'ringing' AND direct_calls.created_at < $2)
+       OR (direct_calls.status = 'active' AND direct_calls.created_at < $3)
+    RETURNING direct_calls.id, direct_calls.caller_id, direct_calls.callee_id
+), cleared AS (
+    DELETE FROM open_call_participants WHERE call_id IN (SELECT id FROM expired)
+)
+SELECT caller_id, callee_id FROM expired;
 
 -- name: GetCallForParticipant :one
 SELECT * FROM direct_calls
@@ -56,13 +66,23 @@ WHERE id = $1 AND callee_id = $2 AND status = 'ringing'
 RETURNING *;
 
 -- name: DeclineDirectCall :one
-UPDATE direct_calls
-SET status = 'declined', ended_at = $3
-WHERE id = $1 AND callee_id = $2 AND status = 'ringing'
-RETURNING *;
+WITH declined AS (
+    UPDATE direct_calls
+    SET status = 'declined', ended_at = $3
+    WHERE id = $1 AND callee_id = $2 AND status = 'ringing'
+    RETURNING *
+), cleared AS (
+    DELETE FROM open_call_participants WHERE call_id IN (SELECT id FROM declined)
+)
+SELECT * FROM declined;
 
 -- name: EndDirectCall :one
-UPDATE direct_calls
-SET status = 'ended', ended_at = $3
-WHERE id = $1 AND (caller_id = $2 OR callee_id = $2) AND status IN ('ringing', 'active')
-RETURNING *;
+WITH ended AS (
+    UPDATE direct_calls
+    SET status = 'ended', ended_at = $3
+    WHERE id = $1 AND (caller_id = $2 OR callee_id = $2) AND status IN ('ringing', 'active')
+    RETURNING *
+), cleared AS (
+    DELETE FROM open_call_participants WHERE call_id IN (SELECT id FROM ended)
+)
+SELECT * FROM ended;

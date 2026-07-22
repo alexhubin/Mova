@@ -415,7 +415,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client, *sql.DB) {
 		t.Fatalf("open database: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if _, err := db.ExecContext(context.Background(), "TRUNCATE direct_messages, room_messages, direct_calls, friendships, friend_requests, room_members, rooms, sessions, user_settings, users CASCADE"); err != nil {
+	if _, err := db.ExecContext(context.Background(), "TRUNCATE open_call_participants, direct_messages, room_messages, direct_calls, friendships, friend_requests, room_members, rooms, sessions, user_settings, users CASCADE"); err != nil {
 		t.Fatalf("reset test database: %v", err)
 	}
 

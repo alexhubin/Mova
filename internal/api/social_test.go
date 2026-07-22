@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"sync"
 	"testing"
 )
 
@@ -196,5 +197,89 @@ func TestPersistentAccountsFriendsAndDirectCall(t *testing.T) {
 	decodeResponse(t, response, &anna)
 	if anna.Username != "anna_voice" || anna.DisplayName != "Анна Нова" {
 		t.Fatalf("unexpected profile: %+v", anna)
+	}
+}
+
+func TestConcurrentDirectCallsCreateOnlyOne(t *testing.T) {
+	server, annaClient, db := newTestServer(t)
+	borisClient := newHTTPClient(t)
+	provisionTestUser(t, db, "anna@example.com", "anna", "very-secure-password", "Анна", false)
+	boris := provisionTestUser(t, db, "boris@example.com", "boris", "another-secure-password", "Борис", false)
+
+	for _, credentials := range []struct {
+		client *http.Client
+		email  string
+		secret string
+	}{
+		{annaClient, "anna@example.com", "very-secure-password"},
+		{borisClient, "boris@example.com", "another-secure-password"},
+	} {
+		response := doJSON(t, credentials.client, http.MethodPost, server.URL+"/api/auth/login", map[string]string{
+			"email": credentials.email, "password": credentials.secret,
+		})
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("login %s status = %d, body = %s", credentials.email, response.StatusCode, responseBody(t, response))
+		}
+		response.Body.Close()
+	}
+
+	response := doJSON(t, annaClient, http.MethodPost, server.URL+"/api/friend-requests", map[string]string{"username": "boris"})
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("friend request status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	response.Body.Close()
+
+	response = doJSON(t, borisClient, http.MethodGet, server.URL+"/api/friends", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("list friend requests status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	var borisFriends friendsResponse
+	decodeResponse(t, response, &borisFriends)
+	if len(borisFriends.Incoming) != 1 {
+		t.Fatalf("unexpected incoming requests: %+v", borisFriends.Incoming)
+	}
+	response = doJSON(t, borisClient, http.MethodPost, server.URL+"/api/friend-requests/"+borisFriends.Incoming[0].ID+"/accept", nil)
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("accept request status = %d, body = %s", response.StatusCode, responseBody(t, response))
+	}
+	response.Body.Close()
+
+	const attempts = 8
+	statuses := make([]int, attempts)
+	start := make(chan struct{})
+	var waiter sync.WaitGroup
+	waiter.Add(attempts)
+	for index := range attempts {
+		go func() {
+			defer waiter.Done()
+			<-start
+			attempt := doJSON(t, annaClient, http.MethodPost, server.URL+"/api/calls", map[string]string{"user_id": boris.ID})
+			statuses[index] = attempt.StatusCode
+			attempt.Body.Close()
+		}()
+	}
+	close(start)
+	waiter.Wait()
+
+	created := 0
+	for _, status := range statuses {
+		switch status {
+		case http.StatusCreated:
+			created++
+		case http.StatusConflict:
+		default:
+			t.Fatalf("unexpected concurrent call statuses: %v", statuses)
+		}
+	}
+	if created != 1 {
+		t.Fatalf("concurrent calls created %d calls, want 1 (statuses %v)", created, statuses)
+	}
+
+	var open int
+	if err := db.QueryRow("SELECT count(*) FROM direct_calls WHERE status IN ('ringing', 'active')").Scan(&open); err != nil {
+		t.Fatalf("count open calls: %v", err)
+	}
+	if open != 1 {
+		t.Fatalf("open calls in database = %d, want 1", open)
 	}
 }

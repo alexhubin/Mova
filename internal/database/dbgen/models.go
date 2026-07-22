@@ -42,6 +42,12 @@ type Friendship struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type OpenCallParticipant struct {
+	UserID    string    `json:"user_id"`
+	CallID    string    `json:"call_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Passkey struct {
 	ID           string          `json:"id"`
 	UserID       string          `json:"user_id"`
